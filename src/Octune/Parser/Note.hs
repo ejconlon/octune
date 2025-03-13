@@ -7,7 +7,7 @@ import Data.Char (digitToInt)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as Set
 import Octune.Parser.Lexeme (Parser, lexeme)
-import Octune.Types
+import Octune.Types.Note
   ( Accidental (..)
   , Beats
   , Letter (..)

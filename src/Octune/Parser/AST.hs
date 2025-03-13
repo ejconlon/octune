@@ -36,14 +36,14 @@ import Octune.Parser.Note
   , pRational
   , pSound
   )
-import Octune.Types
+import Octune.Types.AST
   ( AST (..)
-  , Ann (..)
   , LineFun (..)
-  , Note (..)
   , QualifiedName (..)
   , Waveform (..)
   )
+import Octune.Types.Ann (Ann (..))
+import Octune.Types.Note (Note (..))
 import Text.Megaparsec
   ( MonadParsec (..)
   , SourcePos

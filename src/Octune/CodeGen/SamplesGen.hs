@@ -10,18 +10,17 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Sounds (InternalSamples, clapSamples, snareSamples)
 import Data.WAVE (WAVESamples)
-import Octune.Types
+import Octune.Types.AST (LineFun (..), Waveform (..))
+import Octune.Types.Core (Core (..))
+import Octune.Types.Env (Env)
+import Octune.Types.Note
   ( Accidental (..)
   , Beats
-  , Core (..)
-  , Env
   , Letter (..)
-  , LineFun (..)
   , Note (..)
   , NoteModifier (..)
   , Percussion (..)
   , Sound (..)
-  , Waveform (..)
   )
 
 -- Default amplitude of a wave

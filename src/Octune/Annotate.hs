@@ -11,17 +11,16 @@ import Control.Lens
   , _Just
   )
 import qualified Data.Map.Strict as Map
-import Octune.Types
+import Octune.Types.AST
   ( AST (..)
-  , Ann
-  , Env
   , LineFun (..)
-  , Note (..)
   , annotation
-  , beatLength
   , _LineApp
   , _Song
   )
+import Octune.Types.Ann (Ann, beatLength)
+import Octune.Types.Env (Env)
+import Octune.Types.Note (Note (..))
 
 annotateBeatLengths :: Env (AST Ann) -> Env (AST Ann)
 annotateBeatLengths env = cache

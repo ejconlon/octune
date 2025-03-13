@@ -12,15 +12,9 @@ import Data.Foldable (traverse_)
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Real (Ratio (..))
-import Octune.Types
-  ( AST (..)
-  , Ann
-  , Env
-  , LineFun (..)
-  , annotation
-  , beatLength
-  , pos
-  )
+import Octune.Types.AST (AST (..), LineFun (..), annotation)
+import Octune.Types.Ann (Ann, beatLength, pos)
+import Octune.Types.Env (Env)
 import Text.Megaparsec.Pos (sourcePosPretty)
 
 checkBeatsAssertions :: Env (AST Ann) -> Either [Text] ()

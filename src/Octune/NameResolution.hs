@@ -1,6 +1,7 @@
 module Octune.NameResolution where
 
-import Octune.Types (AST (..), Ann, QualifiedName (..))
+import Octune.Types.AST (AST (..), QualifiedName (..))
+import Octune.Types.Ann (Ann)
 
 -- Variables without qualified module names
 -- implicitly belong to the module they reside in

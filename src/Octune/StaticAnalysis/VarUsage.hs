@@ -17,13 +17,9 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Lens (IsText (packed))
-import Octune.Types
-  ( AST (..)
-  , Ann
-  , Env
-  , QualifiedName (..)
-  , pos
-  )
+import Octune.Types.AST (AST (..), QualifiedName (..))
+import Octune.Types.Ann (Ann, pos)
+import Octune.Types.Env (Env)
 import Text.Megaparsec.Pos (sourcePosPretty)
 
 -- TODO: Use a type for error throughout to express multiple errors

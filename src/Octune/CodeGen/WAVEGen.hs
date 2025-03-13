@@ -6,11 +6,9 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Data.WAVE (WAVE (WAVE), WAVEHeader (..))
 import Octune.CodeGen.SamplesGen (genSamples)
-import Octune.Types
-  ( Core (..)
-  , Env
-  , QualifiedName (..)
-  )
+import Octune.Types.AST (QualifiedName (..))
+import Octune.Types.Core (Core (..))
+import Octune.Types.Env (Env)
 
 -- Number of frames per second
 frameRate :: Int
