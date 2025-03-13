@@ -49,3 +49,7 @@ lint-apply:
 sample-gen target:
   mkdir -p out
   stack exec octune -- -o out/{{target}} samples/{{target}}.otn
+
+sample-gen-dir target:
+  mkdir -p out
+  stack exec octune -- -o out/{{target}} samples/{{target}}/*.otn
