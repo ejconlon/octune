@@ -1,16 +1,28 @@
 module Octune.CodeGen.SamplesGen where
 
-import Control.Lens
-import Control.Monad
-import Control.Monad.Par
-import Data.Bits
-import Data.Int
-import Data.List
+import Control.Lens (dropping, foldlOf', traversed, (&), (.~))
+import Control.Monad (join)
+import Control.Monad.Par (Par, parMapM, runPar)
+import Data.Bits (Bits (shiftL))
+import Data.Int (Int32)
+import Data.List (foldl1')
 import qualified Data.Map.Strict as Map
-import Data.Maybe
-import Data.Sounds
+import Data.Maybe (fromMaybe)
+import Data.Sounds (InternalSamples, clapSamples, snareSamples)
 import Data.WAVE (WAVESamples)
 import Octune.Types
+  ( Accidental (..)
+  , Beats
+  , Core (..)
+  , Env
+  , Letter (..)
+  , LineFun (..)
+  , Note (..)
+  , NoteModifier (..)
+  , Percussion (..)
+  , Sound (..)
+  , Waveform (..)
+  )
 
 -- Default amplitude of a wave
 amplitude :: Int32

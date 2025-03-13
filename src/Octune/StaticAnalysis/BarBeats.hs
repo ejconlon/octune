@@ -1,17 +1,27 @@
-{-# LANGUAGE ExtendedDefaultRules #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Octune.StaticAnalysis.BarBeats where
 
-import Control.Lens
-import Control.Monad
+import Control.Lens (sumOf, to, traversed, (^.), _Just)
+import Control.Monad (when)
 import Data.Either.Validation
-import Data.Foldable
+  ( Validation (Failure)
+  , validationToEither
+  )
+import Data.Foldable (traverse_)
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Real (Ratio (..))
 import Octune.Types
-import Text.Megaparsec.Pos
+  ( AST (..)
+  , Ann
+  , Env
+  , LineFun (..)
+  , annotation
+  , beatLength
+  , pos
+  )
+import Text.Megaparsec.Pos (sourcePosPretty)
 
 checkBeatsAssertions :: Env (AST Ann) -> Either [Text] ()
 checkBeatsAssertions = validationToEither . traverse_ go

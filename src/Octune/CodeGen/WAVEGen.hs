@@ -1,13 +1,16 @@
-{-# LANGUAGE ExtendedDefaultRules #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Octune.CodeGen.WAVEGen where
 
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
-import Data.WAVE
-import Octune.CodeGen.SamplesGen
+import Data.WAVE (WAVE (WAVE), WAVEHeader (..))
+import Octune.CodeGen.SamplesGen (genSamples)
 import Octune.Types
+  ( Core (..)
+  , Env
+  , QualifiedName (..)
+  )
 
 -- Number of frames per second
 frameRate :: Int

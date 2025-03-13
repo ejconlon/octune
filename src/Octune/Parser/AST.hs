@@ -1,17 +1,67 @@
 {-# LANGUAGE ApplicativeDo #-}
-{-# LANGUAGE ExtendedDefaultRules #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Octune.Parser.AST where
 
-import Data.Combinator
+import Data.Combinator ((<^>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Octune.Parser.Lexeme
+  ( Parser
+  , closeMerge
+  , closeRepeat
+  , closeSeq
+  , closeSong
+  , closeSubsection
+  , closeUsingWaveform
+  , closeVolume
+  , colon
+  , equal
+  , identifier
+  , integer
+  , lexeme
+  , moduleKW
+  , openMerge
+  , openRepeat
+  , openSeq
+  , openSong
+  , openSubsection
+  , openUsingWaveform
+  , openVolume
+  )
 import Octune.Parser.Note
+  ( pBeats
+  , pNote
+  , pNoteModifier
+  , pRational
+  , pSound
+  )
 import Octune.Types
+  ( AST (..)
+  , Ann (..)
+  , LineFun (..)
+  , Note (..)
+  , QualifiedName (..)
+  , Waveform (..)
+  )
 import Text.Megaparsec
+  ( MonadParsec (..)
+  , SourcePos
+  , between
+  , getSourcePos
+  , many
+  , optional
+  , sepBy1
+  , some
+  , (<|>)
+  )
 import Text.Megaparsec.Char
+  ( char
+  , letterChar
+  , space
+  , string
+  , upperChar
+  )
 
 initAnn :: SourcePos -> Ann
 initAnn srcPos =

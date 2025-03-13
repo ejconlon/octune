@@ -1,14 +1,14 @@
-{-# LANGUAGE ExtendedDefaultRules #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Octune.Parser.Lexeme where
 
+import Control.Applicative (Alternative (..), many)
 import Control.Monad (void)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Void
-import Text.Megaparsec
-import Text.Megaparsec.Char
+import Data.Void (Void)
+import Text.Megaparsec (Parsec, (<?>))
+import Text.Megaparsec.Char (alphaNumChar, char, lowerChar, space1, string)
 import qualified Text.Megaparsec.Char.Lexer as L
 
 type Parser = Parsec Void Text

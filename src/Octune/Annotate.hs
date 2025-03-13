@@ -1,8 +1,27 @@
 module Octune.Annotate where
 
 import Control.Lens
+  ( Field3 (_3)
+  , foldlOf'
+  , traversed
+  , (&)
+  , (.~)
+  , (?~)
+  , (^.)
+  , _Just
+  )
 import qualified Data.Map.Strict as Map
 import Octune.Types
+  ( AST (..)
+  , Ann
+  , Env
+  , LineFun (..)
+  , Note (..)
+  , annotation
+  , beatLength
+  , _LineApp
+  , _Song
+  )
 
 annotateBeatLengths :: Env (AST Ann) -> Env (AST Ann)
 annotateBeatLengths env = cache

@@ -1,6 +1,22 @@
 module Config where
 
+import Control.Applicative (some)
 import Options.Applicative
+  ( Parser
+  , argument
+  , auto
+  , help
+  , long
+  , metavar
+  , option
+  , optional
+  , short
+  , showDefault
+  , str
+  , strOption
+  , switch
+  , value
+  )
 
 data Config
   = Config

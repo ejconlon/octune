@@ -1,12 +1,8 @@
-{-# LANGUAGE ExtendedDefaultRules #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-
 module Octune.Types.Core where
 
-import Octune.Types.AST
-import Octune.Types.Env
-import Octune.Types.Note
+import Octune.Types.AST (AST (..), LineFun, QualifiedName)
+import Octune.Types.Env (Env)
+import Octune.Types.Note (Note)
 
 -- Resulting from after static analysis
 data Core
@@ -16,7 +12,7 @@ data Core
   | CoreApp !LineFun [Core]
   deriving (Show, Read, Eq)
 
-coreEnv :: forall a. Env (AST a) -> Env Core
+coreEnv :: Env (AST a) -> Env Core
 coreEnv = fmap go
  where
   go :: AST a -> Core

@@ -1,8 +1,8 @@
 module Octune.Types.Ann where
 
-import Control.Lens
+import Control.Lens (Lens')
 import Octune.Types.Note (Beats)
-import Text.Megaparsec
+import Text.Megaparsec (SourcePos)
 
 data Ann
   = Ann

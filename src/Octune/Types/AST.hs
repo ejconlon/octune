@@ -1,9 +1,9 @@
 module Octune.Types.AST where
 
-import Control.Lens
-import Data.Combinator
+import Control.Lens (Lens', Prism', prism')
+import Data.Combinator ((<^>))
 import Data.Text (Text)
-import Octune.Types.Note
+import Octune.Types.Note (Beats, Note)
 
 data Waveform
   = Square

@@ -4,27 +4,44 @@
 
 module Main where
 
-import Config
-import Control.Concurrent
-import Control.Monad
-import Data.Bifunctor
-import Data.Foldable
-import Data.Maybe
-import Data.Monoid
+import Config (Config (cores, files, onlyCheck, output), config)
+import Control.Concurrent (setNumCapabilities)
+import Control.Monad (when)
+import Data.Bifunctor (Bifunctor (first))
+import Data.Foldable (find)
+import Data.Maybe (fromMaybe)
+import Data.Monoid (First (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.WAVE
-import Octune.Annotate
-import Octune.CodeGen
-import Octune.NameResolution
-import Octune.Parser
+import Data.WAVE (putWAVEFile)
+import Octune.Annotate (annotateBeatLengths)
+import Octune.CodeGen (genWAVE)
+import Octune.NameResolution (resolveModuleVariables)
+import Octune.Parser (pFile)
 import Octune.StaticAnalysis
+  ( checkBeatsAssertions
+  , checkVarUsage
+  )
 import Octune.Types
+  ( AST (..)
+  , Ann
+  , Env
+  , buildASTEnv
+  , coreEnv
+  )
 import Options.Applicative
-import System.Exit
-import System.IO
-import Text.Megaparsec
+  ( execParser
+  , fullDesc
+  , header
+  , helper
+  , info
+  , progDesc
+  , (<**>)
+  )
+import System.Exit (ExitCode (..), exitSuccess, exitWith)
+import System.IO (hPutStrLn, stderr)
+import Text.Megaparsec (errorBundlePretty, runParser)
 
 main :: IO ()
 main = runOctune =<< execParser opts

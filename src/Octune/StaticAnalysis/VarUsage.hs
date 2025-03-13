@@ -1,4 +1,3 @@
-{-# LANGUAGE ExtendedDefaultRules #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Octune.StaticAnalysis.VarUsage
@@ -6,17 +5,26 @@ module Octune.StaticAnalysis.VarUsage
   )
 where
 
-import Control.Lens
+import Control.Lens (to, (^.))
 import Data.Either.Validation
-import Data.Foldable
+  ( Validation (..)
+  , validationToEither
+  )
+import Data.Foldable (Foldable (foldl', toList), traverse_)
 import Data.Graph (Graph)
 import qualified Data.Graph as Graph
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.Lens
+import Data.Text.Lens (IsText (packed))
 import Octune.Types
-import Text.Megaparsec.Pos
+  ( AST (..)
+  , Ann
+  , Env
+  , QualifiedName (..)
+  , pos
+  )
+import Text.Megaparsec.Pos (sourcePosPretty)
 
 -- TODO: Use a type for error throughout to express multiple errors
 checkVarUsage :: Env (AST Ann) -> Either [Text] ()

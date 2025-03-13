@@ -6,10 +6,26 @@ module Octune.Parser.Note where
 import Data.Char (digitToInt)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as Set
-import Octune.Parser.Lexeme
+import Octune.Parser.Lexeme (Parser, lexeme)
 import Octune.Types
+  ( Accidental (..)
+  , Beats
+  , Letter (..)
+  , Note (..)
+  , NoteModifier (..)
+  , Octave
+  , Percussion (..)
+  , Sound (..)
+  )
 import Text.Megaparsec
-import Text.Megaparsec.Char
+  ( ErrorItem (..)
+  , MonadParsec (..)
+  , failure
+  , many
+  , optional
+  , (<|>)
+  )
+import Text.Megaparsec.Char (char, digitChar)
 import qualified Text.Megaparsec.Char.Lexer as L
 
 pLetter :: Parser Letter
