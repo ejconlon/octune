@@ -112,11 +112,13 @@ checkNoVarCycles env = errorOnSelfEdges *> errorOnCycles
           ]
        where
         showComponent component =
-          let cycleVars@(v : _) =
+          let cycleVars =
                 fmap
                   (denoteVar . varFromVertex)
                   (toList component)
-          in  T.intercalate " -> " (cycleVars ++ [v, "..."])
+          in  case cycleVars of
+                v : _ -> T.intercalate " -> " (cycleVars ++ [v, "..."])
+                _ -> error "unhandled var case"
         badComponents = fmap showComponent cs
 
   denoteVar :: QualifiedName -> Text
