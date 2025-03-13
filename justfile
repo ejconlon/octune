@@ -1,5 +1,5 @@
 stack_build := "stack build --fast"
-src_dirs := "src test"
+src_dirs := "app src test"
 
 # No default tasks
 default:
@@ -28,6 +28,22 @@ clean:
 # Open browser with generated docs
 docs:
   stack haddock --open
+
+# Install tool deps
+deps:
+  stack build --copy-compiler-tool hlint fourmolu apply-refact
+
+# Format with fourmolu
+format:
+  stack exec -- fourmolu --mode inplace {{ src_dirs }}
+
+# Lint with hlint
+lint:
+  stack exec -- hlint {{ src_dirs }}
+
+# Apply hlint suggestions
+lint-apply:
+  find {{ src_dirs }} -name '*.hs' | xargs -t -I % stack exec -- hlint % --refactor --refactor-options="--inplace"
 
 # Run the executable
 sample-gen target:
