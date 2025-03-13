@@ -45,11 +45,19 @@ lint:
 lint-apply:
   find {{ src_dirs }} -name '*.hs' | xargs -t -I % stack exec -- hlint % --refactor --refactor-options="--inplace"
 
-# Run the executable
+# Generate wav for a single file
 sample-gen target:
   mkdir -p out
   stack exec octune -- -o out/{{target}} samples/{{target}}.otn
 
+# Generate wav for a directory
 sample-gen-dir target:
   mkdir -p out
   stack exec octune -- -o out/{{target}} samples/{{target}}/*.otn
+
+# Profile wav gen for a single file
+sample-gen-prof target:
+  mkdir -p out
+  stack build --profile
+  stack exec --profile octune -- +RTS -p -RTS -o out/{{target}} samples/{{target}}.otn
+  stack exec profiteur -- octune.prof
