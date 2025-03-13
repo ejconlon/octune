@@ -1,61 +1,64 @@
-{-# LANGUAGE ApplicativeDo        #-}
+{-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE ExtendedDefaultRules #-}
-{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Octune.Parser.AST where
 
-import           Data.Text            (Text)
-import qualified Data.Text            as T
-
-import           Text.Megaparsec
-import           Text.Megaparsec.Char
-
-import           Data.Combinator
-import           Octune.Parser.Lexeme
-import           Octune.Parser.Note
-import           Octune.Types
+import Data.Combinator
+import Data.Text (Text)
+import qualified Data.Text as T
+import Octune.Parser.Lexeme
+import Octune.Parser.Note
+import Octune.Types
+import Text.Megaparsec
+import Text.Megaparsec.Char
 
 initAnn :: SourcePos -> Ann
 initAnn srcPos =
-    Ann
-        { _pos = srcPos
-        , _beatLength = Nothing
-        }
+  Ann
+    { _pos = srcPos
+    , _beatLength = Nothing
+    }
 
 getAnn :: Parser Ann
 getAnn = initAnn <$> getSourcePos
 
 pWaveform :: Parser Waveform
-pWaveform = lexeme $
-    Square <$ string "SQUARE"
-    <|>
-    Sawtooth <$ string "SAWTOOTH"
-    <|>
-    Triangle <$ string "TRIANGLE"
+pWaveform =
+  lexeme $
+    Square
+      <$ string "SQUARE"
+        <|> Sawtooth
+      <$ string "SAWTOOTH"
+        <|> Triangle
+      <$ string "TRIANGLE"
 
 pModuleComponent :: Parser Text
 pModuleComponent = T.pack <$> ((:) <$> upperChar <*> many letterChar)
 
 pModuleDeclaration :: Parser [Text]
-pModuleDeclaration = lexeme $
+pModuleDeclaration =
+  lexeme $
     moduleKW *> pModuleComponent `sepBy1` char '.'
 
 pFile :: Parser (AST Ann)
 pFile = lexeme space *> pFileBase
-  where
-    pFileBase =
-        File
-        <$> getAnn
-        <*> pModuleDeclaration
-        <*> some pDecl <* eof
+ where
+  pFileBase =
+    File
+      <$> getAnn
+      <*> pModuleDeclaration
+      <*> some pDecl
+      <* eof
 
 pDecl :: Parser (AST Ann)
 pDecl = Decl <$> getAnn <*> (identifier <* equal) <*> pRhs
-  where
-    pRhs = try pLineExpr <|> pSongExpr
+ where
+  pRhs = try pLineExpr <|> pSongExpr
 
 pSongExpr :: Parser (AST Ann)
-pSongExpr = between openSong closeSong $
+pSongExpr =
+  between openSong closeSong $
     Song <$> getAnn <*> integer <* colon <*> pLineExpr
 
 pLineExpr :: Parser (AST Ann)
@@ -63,7 +66,7 @@ pLineExpr = try pLineNote <|> pVar <|> pLineApp
 
 pQualifiedName :: Parser QualifiedName
 pQualifiedName =
-    QualName <$> many (pModuleComponent <* char '.') <*> identifier
+  QualName <$> many (pModuleComponent <* char '.') <*> identifier
 
 pVar :: Parser (AST Ann)
 pVar = Var <$> getAnn <*> pQualifiedName
@@ -73,57 +76,60 @@ pLineNote = LineNote <$> getAnn <*> pNote
 
 pLineApp :: Parser (AST Ann)
 pLineApp =
-    pRepeatApp
-    <|>
-    try pMergeApp <|> pChord
-    <|>
-    pUsingWaveformApp
-    <|>
-    pVolumeApp
-    <|>
-    pSubsectionApp
-    <|>
-    pSeqApp
-  where
-    pRepeatApp = between openRepeat closeRepeat $
-        LineApp
+  pRepeatApp
+    <|> try pMergeApp
+    <|> pChord
+    <|> pUsingWaveformApp
+    <|> pVolumeApp
+    <|> pSubsectionApp
+    <|> pSeqApp
+ where
+  pRepeatApp =
+    between openRepeat closeRepeat $
+      LineApp
         <$> getAnn
         <*> (Repeat <$> (integer <* colon))
         <*> some (pBeatAssert <|> pLineExpr)
-    pMergeApp = between openMerge closeMerge $
-        LineApp
+  pMergeApp =
+    between openMerge closeMerge $
+      LineApp
         <$> getAnn
-        <^> Merge
+          <^> Merge
         <*> some pLineExpr
-    pUsingWaveformApp = between openUsingWaveform closeUsingWaveform $
-        LineApp
+  pUsingWaveformApp =
+    between openUsingWaveform closeUsingWaveform $
+      LineApp
         <$> getAnn
         <*> (UsingWaveform <$> (pWaveform <* colon))
         <*> some (pBeatAssert <|> pLineExpr)
-    pVolumeApp = between openVolume closeVolume $
-        LineApp
+  pVolumeApp =
+    between openVolume closeVolume $
+      LineApp
         <$> getAnn
         <*> (Volume <$> (lexeme pRational <* colon))
         <*> some (pBeatAssert <|> pLineExpr)
-    pSubsectionApp = between openSubsection closeSubsection $
-        LineApp
+  pSubsectionApp =
+    between openSubsection closeSubsection $
+      LineApp
         <$> getAnn
-        <*> (Subsection
-             <$> (pRational <* char '~')
-             <*> (lexeme pRational <* colon))
+        <*> ( Subsection
+                <$> (pRational <* char '~')
+                <*> (lexeme pRational <* colon)
+            )
         <*> some (pBeatAssert <|> pLineExpr)
-    pSeqApp = between openSeq closeSeq $
-        LineApp
+  pSeqApp =
+    between openSeq closeSeq $
+      LineApp
         <$> getAnn
-        <^> Seq
+          <^> Seq
         <*> some (pBeatAssert <|> pLineExpr)
 
 pBeatAssert :: Parser (AST Ann)
-pBeatAssert = lexeme $
+pBeatAssert =
+  lexeme $
     BeatsAssertion
-    <$> getAnn
-    <*> (char '|' *> optional (pBeats <* char '>'))
-
+      <$> getAnn
+      <*> (char '|' *> optional (pBeats <* char '>'))
 
 -- Syntactic sugar
 
@@ -132,10 +138,10 @@ pBeatAssert = lexeme $
 -- `p1`, ..., `pn` are pitches
 pChord :: Parser (AST Ann)
 pChord = between openMerge closeMerge $ do
-    ann <- getAnn
-    noteMods <- many pNoteModifier
-    beats <- lexeme pBeats
-    colon
-    pitches <- many (lexeme pSound)
-    let notes = Note noteMods beats <$> pitches
-    pure $ LineApp ann Merge (LineNote ann <$> notes)
+  ann <- getAnn
+  noteMods <- many pNoteModifier
+  beats <- lexeme pBeats
+  colon
+  pitches <- many (lexeme pSound)
+  let notes = Note noteMods beats <$> pitches
+  pure $ LineApp ann Merge (LineNote ann <$> notes)

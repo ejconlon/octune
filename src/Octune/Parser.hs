@@ -1,5 +1,6 @@
-module Octune.Parser (
-    module P
-) where
+module Octune.Parser
+  ( module P
+  )
+where
 
-import           Octune.Parser.AST as P
+import Octune.Parser.AST as P

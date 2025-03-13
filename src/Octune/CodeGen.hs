@@ -1,5 +1,6 @@
-module Octune.CodeGen (
-    module C
-) where
+module Octune.CodeGen
+  ( module C
+  )
+where
 
-import           Octune.CodeGen.WAVEGen as C
+import Octune.CodeGen.WAVEGen as C

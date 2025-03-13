@@ -1,84 +1,84 @@
 {-# LANGUAGE ExtendedDefaultRules #-}
-{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Octune.Parser.Lexeme where
 
-import           Data.Void
-
-import           Data.Text                  (Text)
-import qualified Data.Text                  as T
-
-import           Text.Megaparsec
-import           Text.Megaparsec.Char
+import Control.Monad (void)
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Void
+import Text.Megaparsec
+import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 
 type Parser = Parsec Void Text
 
 lexeme :: Parser a -> Parser a
 lexeme =
-    L.lexeme $
-        L.space
-            space1
-            (L.skipLineComment "--")
-            (L.skipBlockComment "{-" "-}")
+  L.lexeme $
+    L.space
+      space1
+      (L.skipLineComment "--")
+      (L.skipBlockComment "{-" "-}")
 
 openSong :: Parser ()
-openSong = () <$ lexeme (char '{')
+openSong = void (lexeme (char '{'))
 
 closeSong :: Parser ()
-closeSong = () <$ lexeme (char '}')
+closeSong = void (lexeme (char '}'))
 
 openSeq :: Parser ()
-openSeq = () <$ lexeme (char '[')
+openSeq = void (lexeme (char '['))
 
 closeSeq :: Parser ()
-closeSeq = () <$ lexeme (char ']')
+closeSeq = void (lexeme (char ']'))
 
 openRepeat :: Parser ()
-openRepeat = () <$ lexeme (string "[*")
+openRepeat = void (lexeme (string "[*"))
 
 closeRepeat :: Parser ()
-closeRepeat = () <$ lexeme (string "*]")
+closeRepeat = void (lexeme (string "*]"))
 
 openMerge :: Parser ()
-openMerge = () <$ lexeme (string "[+")
+openMerge = void (lexeme (string "[+"))
 
 closeMerge :: Parser ()
-closeMerge = () <$ lexeme (string "+]")
+closeMerge = void (lexeme (string "+]"))
 
 openUsingWaveform :: Parser ()
-openUsingWaveform = () <$ lexeme (string "[^")
+openUsingWaveform = void (lexeme (string "[^"))
 
 closeUsingWaveform :: Parser ()
-closeUsingWaveform = () <$ lexeme (string "^]")
+closeUsingWaveform = void (lexeme (string "^]"))
 
 openVolume :: Parser ()
-openVolume = () <$ lexeme (string "[!")
+openVolume = void (lexeme (string "[!"))
 
 closeVolume :: Parser ()
-closeVolume = () <$ lexeme (string "!]")
+closeVolume = void (lexeme (string "!]"))
 
 openSubsection :: Parser ()
-openSubsection = () <$ lexeme (string "[-")
+openSubsection = void (lexeme (string "[-"))
 
 closeSubsection :: Parser ()
-closeSubsection = () <$ lexeme (string "-]")
+closeSubsection = void (lexeme (string "-]"))
 
 moduleKW :: Parser Text
 moduleKW = lexeme (string "module")
 
 identifier :: Parser Text
-identifier = T.pack <$>
-    lexeme ((:) <$> lowerChar <*> many idChar <?> "identifier")
-  where
-    idChar :: Parser Char
-    idChar = alphaNumChar <|> char '#'
+identifier =
+  T.pack
+    <$> lexeme ((:) <$> lowerChar <*> many idChar <?> "identifier")
+ where
+  idChar :: Parser Char
+  idChar = alphaNumChar <|> char '#'
 
 integer :: Parser Int
 integer = lexeme L.decimal
 
 equal :: Parser ()
-equal = () <$ lexeme (char '=')
+equal = void (lexeme (char '='))
 
 colon :: Parser ()
-colon = () <$ lexeme (char ':')
+colon = void (lexeme (char ':'))
