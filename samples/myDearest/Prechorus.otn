@@ -1,11 +1,11 @@
 module MyDearest.Prechorus
 
 self = [+
-    melody 
+    melody
     choir
     [^ SAWTOOTH : [! 0.75 : strings !] ^]
     [! 0.60 : piano !]
-    bass 
+    bass
     drums
 +]
 
@@ -73,7 +73,7 @@ bass = [
 ]
 
 drums = [
-    [* 2 : 
+    [* 2 :
         |8> [* 2  : e%% e% e% e%% e% e% e%% s%% s%% *]
         |8> e%% e% e% e%% e% e% e%% s%% s%%
             e%% e% e% e%% e%% e%% e%% e%%
@@ -83,7 +83,7 @@ drums = [
     |8> [* 8 : s%% s% s% s% *]
     |8> [* 8 : s%% s% s% s% *]
 
-    |8> e%% e% e% e% e%% e% e% e%% 
+    |8> e%% e% e% e% e%% e% e% e%%
         e% e%% e% e% e%% e% e% e%%
     |8> e%% e% e% e% e%% e% e% e%% h_ e%% q%% e%%
 ]

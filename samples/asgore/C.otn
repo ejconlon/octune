@@ -33,7 +33,7 @@ r2 = [
 r2Riff = [
     'sF#5 'sE5 'sD5 'sC#5 'sD5 'sC#5 'sB4 'sD5 'e.C#5 'e.G#4 'sG#4 'sC#5
     'sF#5 'sE5 'sD5 'sC#5 'sB4 'sA5 'sG#5 'sF#5 'eE5 'eF#5 'e.G#5 'sA#5
-    'sB5 'sA#5 'sG#5 'sF#5 'sG#5 'sF#5 'sG#5 'sA#5 'e.G#5 'e.C#5 
+    'sB5 'sA#5 'sG#5 'sF#5 'sG#5 'sF#5 'sG#5 'sA#5 'e.G#5 'e.C#5
 ]
 
 l2 = [
@@ -44,22 +44,22 @@ l2 = [
 l2Riff = [
     'sA4 'sG#4 'sF#4 'sE4 'sF#4 'sE4 'sD4 'sF#4 'e.F4 'e.C#4 'sC#4 'sE4
     'sA4 'sG#4 'sF#4 'sE4 'sD4 'sC#5 'sB4 'sA4 'eG#4 'eA#4 'e.B4 'sE4
-    'sG#4 'sF#4 'sE4 'sD#4 'sE4 'sD#4 'sE4 'sF#4 'e.E4 'e.E4 
+    'sG#4 'sF#4 'sE4 'sD#4 'sE4 'sD#4 'sE4 'sF#4 'e.E4 'e.E4
 ]
 
 
 bass2 = [
     |16>
     bass2Riff
-    [+ 
+    [+
         [ 'sA2 'sE2 'sA3 'sE2 'sA2 'sA3 'sE3 'sA2 ]
         [* 8 : 'sA2 *]
     +]
     'sG#2 'sD#3 'sG#3 'sD#3 'sG#2 'sG#3 'sD#3 'sG#2
 
-    |27.5> 
+    |27.5>
     bass2Riff
-    [* 2 : 
+    [* 2 :
         [+
             [ 'sA2 'sC#3 'sE2 'eA3 'sE2 'sC#3 'sA2 ]
             [* 8 : 'sA2 *]
@@ -71,7 +71,7 @@ bass2 = [
             [* 8 : 'sB2 *]
         +]
     *]
-    [* 2 : 
+    [* 2 :
         [+
             [ 'sA2 'sC#3 'sE2 'eA3 'sE2 'sC#3 'sA2 ]
             [* 8 : 'sA2 *]
@@ -87,7 +87,7 @@ bass2 = [
     +]
 ]
 bass2Riff = [
-    [+ 
+    [+
         [ 'sD2 'sA2 'sD3 'sA2 'sD2 'sD3 'sA2 'sD2 ]
         [* 8 : 'sD2 *]
     +]
@@ -95,7 +95,7 @@ bass2Riff = [
         [ 'sC#2 'sG#2 'sC#3 'sG#2 'sC#2 'sC#3 'sG#2 'sC#2 ]
         [* 8 : 'sC#2 *]
     +]
-    [+ 
+    [+
         [ 'sD2 'sA2 'sD3 'sA2 'sD2 'sD3 'sA2 'sD2 ]
         [* 8 : 'sD2 *]
     +]

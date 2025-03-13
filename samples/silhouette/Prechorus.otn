@@ -35,7 +35,7 @@ l = [
     |4> 'hB3 'hB3
     |4> qG3 qB3 'hD4
     |4> 'hC#4 'hC#4
-    |4> qC#4 qB3 qA3 qG3 
+    |4> qC#4 qB3 qA3 qG3
 ]
 
 bass = [

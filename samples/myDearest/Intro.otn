@@ -2,22 +2,22 @@ module MyDearest.Intro
 
 self = [
     [+
-        melody1 
+        melody1
         [! 0.5 : accomp1 !]
-        bass1 
+        bass1
     +]
     [+
         6C5
         stringMelody2
         [! 0.75 : highAccomp2 !]
         [^ SAWTOOTH : [! 1 : lowAccomp2 !] ^]
-        bass2 
-        drums2 
+        bass2
+        drums2
     +]
 ]
 
 melody1 = [
-    |4> h._ qG5 
+    |4> h._ qG5
     |8> qC6 eB5 qA5 'qG5 qG5 qD5 q.E5 qF5
     |8> qE5 eF5 qE5 qF5 qE5 eD5 q.C5 q.B4
     |8> 8C5
@@ -90,7 +90,7 @@ bass2 = [
 ]
 
 drums2 = [
-    [* 7 : 
+    [* 7 :
         |8> [* 3 : s%% s% s% s% *] s%% s% s% s%%
             e%% e% e% e%% e% e% e%% e%
     *]

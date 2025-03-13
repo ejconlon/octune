@@ -3,7 +3,7 @@ module Silhouette.Verse
 self = [+ r l bass drums +]
 
 r = [
-    melody 
+    melody
     melodyUpOctave
 ]
 melody = [
@@ -52,5 +52,5 @@ drums = [
     |16> [* 4 : e% e% e%% e% e% e% e%% e%% *]
     |16> [* 3 : e% e% e%% e% e% e% e%% e%% *]
          e% e% e%% e% e% e%% e%% s%% s%%
-         
+
 ]

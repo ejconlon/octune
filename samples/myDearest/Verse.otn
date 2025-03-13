@@ -4,12 +4,12 @@ self = [
     [+
         melody1
         [! 0.5 : pianoChords1 !]
-        bass1 
+        bass1
         drums1
     +]
 
     [+
-        4C5 
+        4C5
         melody2
         [! 0.5 : pianoChords2 !]
         [^ SAWTOOTH : [! 0.75 : strings2 !] ^]
@@ -59,7 +59,7 @@ pianoChords1 = [
 
     |8> [* 4 : [+ 'h : G#3 D4 +] *]
 
-    |8> [* 2 : [+ 'h : A3 E4 +] *] 
+    |8> [* 2 : [+ 'h : A3 E4 +] *]
         [+ 'h : B3 E4 +] [+ 'h : A3 E4 +]
 
     |8> [* 2 : [+ 'h : G3 E4 +] *]
@@ -84,7 +84,7 @@ pianoChords2 = [
 
     |8> [* 4 : [+ 'h : G#3 D4 +] *]
 
-    |8> [* 2 : [+ 'h : A3 E4 +] *] 
+    |8> [* 2 : [+ 'h : A3 E4 +] *]
         [+ 'h : B3 E4 +] [+ 'h : A3 E4 +]
 
     |8> [* 4 : [+ 'h : A3 C#4 +] *]

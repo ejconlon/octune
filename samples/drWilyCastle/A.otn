@@ -24,9 +24,9 @@ riffHead = [
     |4> e_ eF#4 e_ eE4 e_ eF#4 q_
 
     |4> e_ 'sF#4 'sF#4 'eF#4 'sF#4 'sF#4 eF#4 eD#4 e_ eG#4
-    |11> e_ eF#4 e_ eE4 e_ eD#4 e_ 
+    |11> e_ eF#4 e_ eE4 e_ eD#4 e_
          'qC#4 eC#4 eG#4 eB4 qA#4 e_
-         'qC#4 eC#4 eG#4 eB4 qA#4 
+         'qC#4 eC#4 eG#4 eB4 qA#4
 ]
 
 support1 = [ |32> supportHead eB4 eC#5 ]
@@ -42,7 +42,7 @@ supportHead = [
     |4> e_ eD#4 e_ eC#4 e_ eB3 q_
 
     |4> h_ h_
-    |3> h_ q_ 
+    |3> h_ q_
 ]
 
 bass = [

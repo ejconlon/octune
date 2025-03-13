@@ -3,7 +3,7 @@ module Pursuit.B
 self = [
     |16> selfA
     |16>
-    [+ 
+    [+
         selfB
         [! 0.6 : [^ SAWTOOTH :
             12_

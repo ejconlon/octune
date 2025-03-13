@@ -3,7 +3,7 @@ module Asgore.A
 -- A SECTION
 
 self = [
-    [+ 
+    [+
         r1
         l1
         bass1
@@ -14,7 +14,7 @@ self = [
         bass2
     +]
 
-    [+ 
+    [+
         r1
         l1
         bass1
@@ -29,7 +29,7 @@ self = [
 
 r1 = [
     |2> 'eE4 e_ 'eG#4 e_
-    |4> tF4 s.F#4 'qF#4 'eG#4 e.C#4 e.D#4 eE4 
+    |4> tF4 s.F#4 'qF#4 'eG#4 e.C#4 e.D#4 eE4
     |4> q.G#4 e_ 'eE4 e_ 'eG#4 e_
     |4> tF4 s.F#4 'qF#4 'eG#4 e.C#4 e.D#4 eB4
     |2> q.G#4 e_

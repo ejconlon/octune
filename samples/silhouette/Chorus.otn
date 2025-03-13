@@ -96,7 +96,7 @@ repriseR = [
          Silhouette.Common.nanimoHigh q_
          hD5 qC#5 qA5 qE5 qF#5
 
-    |16> melodyD 
+    |16> melodyD
     |16> qD5 q_
          Silhouette.Common.nanimoHigh q_
          Silhouette.Common.nanimoHigh q_
@@ -141,8 +141,8 @@ repriseBass = [* 2 : bass *]
 
 repriseGuitarLine = [
     |32> 4_ repriseGuitarRiffTail
-    |96> 
-    [* 3 : 
+    |96>
+    [* 3 :
         |32> 4F#4 repriseGuitarRiffTail
     *]
 ]

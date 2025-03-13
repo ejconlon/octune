@@ -3,7 +3,7 @@ module Asgore.B
 -- B SECTION
 
 self = [+ r l bass +]
-    
+
 r = [
     |2> 'eE4 e_ 'eD#4 e_
 
@@ -14,13 +14,13 @@ r = [
 
     |16> [* 3 : [+ rRiff rRiffUpOctave +] *]
          [+ rRiffTail1 rRiffTail1UpOctave +]
-    |16> [* 3 : [+ rRiff rRiffUpOctave +] *] 
+    |16> [* 3 : [+ rRiff rRiffUpOctave +] *]
          [+ rRiffTail2 rRiffTail2UpOctave +]
     |32> [+
              [
                  |16> [* 3 : [+ rRiff rRiffUpOctave +] *]
                       [+ rRiffTail1 rRiffTail1UpOctave +]
-                 |16> [* 3 : [+ rRiff rRiffUpOctave +] *] 
+                 |16> [* 3 : [+ rRiff rRiffUpOctave +] *]
                       [+ rRiffTail2 rRiffTail2UpOctave +]
              ]
              [* 2 : 8C#4 4D#4 4_ *]
@@ -41,7 +41,7 @@ rRiffTail2UpOctave =
 
 l = [
     |2> 'eA3 e_ 'eG#3 e_ |
-    [* 6 : 
+    [* 6 :
         |4> 'e.E3 'e.E3 'tD#3 'tD#3 'tD#3 tE3 'eE3 'eE3 'eE3 'eD#3
         |4> 'e.E3 'e.E3 sD#3 'e.E3 'eE3 'eE3 'tF#3 'tF#3 'tF#3 'tF#3
         |4> 'e.G#3 'e.G#3 'tF#3 'tF#3 'tF#3 tG#3 'eG#3 'eG#3 'eG#3 'eF#3

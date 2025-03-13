@@ -4,13 +4,13 @@ main = { 170 : myDearest }
 
 myDearest = [
     MyDearest.Intro.self
-    [+ 
+    [+
         MyDearest.Verse.self
         [ 125_ qC5 qE5 qD5 ]
     +]
     MyDearest.Prechorus.self
     MyDearest.Chorus.self
-    [+ 
+    [+
         6C5
         MyDearest.ChorusTransition.self
     +]
@@ -22,7 +22,7 @@ myDearest = [
     +]
     MyDearest.Bridge.self
     [! 1.2 : MyDearest.Chorus.repriseMajor !]
-    [+ 
+    [+
         6C5
         MyDearest.ChorusTransition.self
     +]

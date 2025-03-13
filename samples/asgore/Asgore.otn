@@ -5,9 +5,9 @@ module Asgore
 main = { 116 : [ bergentruckung h_ asgore ] }
 
 bergentruckung = [+
-    bergentruckungR 
-    bergentruckungL 
-    bergentruckungBass 
+    bergentruckungR
+    bergentruckungL
+    bergentruckungBass
 +]
 
 bergentruckungR = [

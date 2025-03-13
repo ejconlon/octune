@@ -11,7 +11,7 @@ self = [
     selfMajor
 ]
 
-selfMajor = [+ 
+selfMajor = [+
     melody2
     [! 0.6 : choir !]
     [^ SAWTOOTH : [! 0.7 : strings2 !] ^]
@@ -33,7 +33,7 @@ reprise = [
     repriseMajor
 ]
 
-repriseMajor = [+ 
+repriseMajor = [+
     melody2
     [! 0.6 : choir !]
     [^ SAWTOOTH : [! 0.7 : strings2 !] ^]
@@ -173,7 +173,7 @@ drums1 = [
     |8> [+ e%% MyDearest.Common.quintDrum +] MyDearest.Common.quintDrum
     |8> MyDearest.Common.quintDrum MyDearest.Common.quintDrum
     |8> [+ e%% MyDearest.Common.quintDrum +] MyDearest.Common.quintDrum
-    |8> MyDearest.Common.quintDrum 
+    |8> MyDearest.Common.quintDrum
         e% e%% e%% e% e%% e% e%% e%
 
     |8> e%% [* 14 : e% *] e%%

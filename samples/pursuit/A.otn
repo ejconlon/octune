@@ -79,9 +79,9 @@ melodyB2 = [
 ]
 
 
-stringsA2 = [ 
+stringsA2 = [
     |4> 4_
-    |4> q._ 'sC5 'sEb5 'sG5 'sC6 'sG5 'sEb5 eC5 e_ 
+    |4> q._ 'sC5 'sEb5 'sG5 'sC6 'sG5 'sEb5 eC5 e_
     |4> [! 0.75 : 4G4 !]
     |4> 4_
 ]

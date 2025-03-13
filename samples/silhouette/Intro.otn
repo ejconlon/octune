@@ -5,7 +5,7 @@ self = [
     [+ [^ SAWTOOTH : r2 ^] l2 Silhouette.Common.mainBass drums2 +]
 ]
 
-r1 = [ 
+r1 = [
     |8> r1Riff eG5 eF#5 eD5
     |8> r1Riff eB5 eG5 eD5
     |8> r1Riff eG5 eF#5 eD5
