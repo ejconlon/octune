@@ -17,20 +17,59 @@ description: Please see the README on GitHub at <https://github.com/githubuser/o
 
 dependencies:
 - base >= 4.7 && < 5
-- text
 - containers
+- dahdit >= 0.8
+- dahdit-audio >= 0.8
+- deepseq
 - either
 - lens
 - megaparsec
-- WAVE
-- optparse-applicative
 - monad-par
+- optparse-applicative
+- primitive
+- text
+- proteaaudio
 
-library:
-  source-dirs: src
+default-extensions:
+- BangPatterns
+- ConstraintKinds
+- DataKinds
+- DeriveFunctor
+- DeriveFoldable
+- DeriveGeneric
+- DeriveTraversable
+- DerivingStrategies
+- DerivingVia
+- FlexibleContexts
+- FlexibleInstances
+- FunctionalDependencies
+- GADTs
+- GeneralizedNewtypeDeriving
+- ImportQualifiedPost
+- KindSignatures
+- LambdaCase
+- MultiParamTypeClasses
+- MultiWayIf
+- Rank2Types
+- ScopedTypeVariables
+- StandaloneDeriving
+- TupleSections
+- TypeApplications
+- TypeOperators
+- TypeFamilies
 
 ghc-options:
 - -Wall
+- -Wcompat
+- -Widentities
+- -Wincomplete-record-updates
+- -Wincomplete-uni-patterns
+- -Wpartial-fields
+- -Wredundant-constraints
+- -fno-warn-unused-top-binds
+
+library:
+  source-dirs: src
 
 executables:
   octune:

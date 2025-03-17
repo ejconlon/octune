@@ -5,12 +5,52 @@
 
 packages:
 - completed:
-    hackage: WAVE-0.1.6@sha256:f744ff68f5e3a0d1f84fab373ea35970659085d213aef20860357512d0458c5c,1016
+    hackage: aeson-via-0.2.3@sha256:7c265c4ed52f06d4459b8dffce0e48a244c9612a6b8f8226b2eba6166a147612,1849
     pantry-tree:
-      sha256: ee5ccd70fa7fe6ffc360ebd762b2e3f44ae10406aa27f3842d55b8cbd1a19498
-      size: 405
+      sha256: 9aa1f458dc41f746f0d774b5f25e0ff1f370396ccdf15cbf2b1591a9eee73168
+      size: 264
   original:
-    hackage: WAVE-0.1.6
+    hackage: aeson-via-0.2.3
+- completed:
+    hackage: data-sword-0.2.0.3@sha256:953cca4b4533a388df0ef17e06ac5530652d1d73decfe8b656242ccdf4b40999,1568
+    pantry-tree:
+      sha256: 60a104a3d3cbba2e099a9e7ce561322b2884f5323cf74fd876dfb59f265d803c
+      size: 439
+  original:
+    hackage: data-sword-0.2.0.3
+- completed:
+    commit: 1d9f0823d0fc0e406e59043dd721f0fb09ce518a
+    git: git@github.com:ejconlon/dahdit.git
+    name: dahdit
+    pantry-tree:
+      sha256: 6b35a340ed4bfe376cf8f10fa776e8c59fb977c3adfdb52d8088249a0a5e0779
+      size: 1188
+    subdir: dahdit
+    version: 0.8.0
+  original:
+    commit: 1d9f0823d0fc0e406e59043dd721f0fb09ce518a
+    git: git@github.com:ejconlon/dahdit.git
+    subdir: dahdit
+- completed:
+    commit: 1d9f0823d0fc0e406e59043dd721f0fb09ce518a
+    git: git@github.com:ejconlon/dahdit.git
+    name: dahdit-audio
+    pantry-tree:
+      sha256: a71ae2b8a20d7f332b555dcd938927525919b5b4ecbb7447858c839e39177c22
+      size: 1927
+    subdir: dahdit-audio
+    version: 0.8.0
+  original:
+    commit: 1d9f0823d0fc0e406e59043dd721f0fb09ce518a
+    git: git@github.com:ejconlon/dahdit.git
+    subdir: dahdit-audio
+- completed:
+    hackage: proteaaudio-0.10.1@sha256:1de76a1fc5ff15773c41f85689965455e8be770c8a88542e8ac1159c81b77868,2952
+    pantry-tree:
+      sha256: fef527961487a63e3ed0f14b01807d91d1a3de0c965efe9335ed80d702693494
+      size: 1992
+  original:
+    hackage: proteaaudio-0.10.1
 snapshots:
 - completed:
     sha256: 1964d439d2a152be4238053f3f997a09fb348391984daab86d724975ef9a423f

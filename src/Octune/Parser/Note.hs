@@ -4,8 +4,8 @@
 module Octune.Parser.Note where
 
 import Data.Char (digitToInt)
-import qualified Data.List.NonEmpty as NE
-import qualified Data.Set as Set
+import Data.List.NonEmpty qualified as NE
+import Data.Set qualified as Set
 import Octune.Parser.Lexeme (Parser, lexeme)
 import Octune.Types.Note
   ( Accidental (..)
@@ -26,7 +26,7 @@ import Text.Megaparsec
   , (<|>)
   )
 import Text.Megaparsec.Char (char, digitChar)
-import qualified Text.Megaparsec.Char.Lexer as L
+import Text.Megaparsec.Char.Lexer qualified as L
 
 pLetter :: Parser Letter
 pLetter =

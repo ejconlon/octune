@@ -12,10 +12,10 @@ import Data.Either.Validation
   )
 import Data.Foldable (Foldable (foldl', toList), traverse_)
 import Data.Graph (Graph)
-import qualified Data.Graph as Graph
-import qualified Data.Map.Strict as Map
+import Data.Graph qualified as Graph
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Data.Text.Lens (IsText (packed))
 import Octune.Types.AST (AST (..), QualifiedName (..))
 import Octune.Types.Ann (Ann, pos)

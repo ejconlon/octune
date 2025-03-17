@@ -2,9 +2,9 @@
 
 module Octune.CodeGen.WAVEGen where
 
-import qualified Data.Map.Strict as Map
+import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..))
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
-import Data.WAVE (WAVE (WAVE), WAVEHeader (..))
 import Octune.CodeGen.SamplesGen (genSamples)
 import Octune.Types.AST (QualifiedName (..))
 import Octune.Types.Core (Core (..))

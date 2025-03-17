@@ -1,7 +1,7 @@
 module Octune.Types.Env where
 
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Octune.Types.AST (AST (..), QualifiedName (..))
 
 type Env = Map QualifiedName

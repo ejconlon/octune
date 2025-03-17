@@ -5,7 +5,7 @@ module Octune.Parser.AST where
 
 import Data.Combinator ((<^>))
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Octune.Parser.Lexeme
   ( Parser
   , closeMerge

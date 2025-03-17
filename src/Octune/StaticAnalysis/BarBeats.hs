@@ -10,7 +10,7 @@ import Data.Either.Validation
   )
 import Data.Foldable (traverse_)
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import GHC.Real (Ratio (..))
 import Octune.Types.AST (AST (..), LineFun (..), annotation)
 import Octune.Types.Ann (Ann, beatLength, pos)

@@ -7,14 +7,14 @@ module Main where
 import Config (Config (cores, files, onlyCheck, output), config)
 import Control.Concurrent (setNumCapabilities)
 import Control.Monad (when)
+import Dahdit.Audio.Wav.Simple (putWAVEFile)
 import Data.Bifunctor (Bifunctor (first))
 import Data.Foldable (find)
 import Data.Maybe (fromMaybe)
 import Data.Monoid (First (..))
 import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
-import Data.WAVE (putWAVEFile)
+import Data.Text qualified as T
+import Data.Text.IO qualified as TIO
 import Octune.Annotate (annotateBeatLengths)
 import Octune.CodeGen (genWAVE)
 import Octune.NameResolution (resolveModuleVariables)

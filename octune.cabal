@@ -39,6 +39,7 @@ library
       Octune.Parser.AST
       Octune.Parser.Lexeme
       Octune.Parser.Note
+      Octune.Player
       Octune.StaticAnalysis
       Octune.StaticAnalysis.BarBeats
       Octune.StaticAnalysis.VarUsage
@@ -52,16 +53,47 @@ library
       Paths_octune
   hs-source-dirs:
       src
-  ghc-options: -Wall
+  default-extensions:
+      BangPatterns
+      ConstraintKinds
+      DataKinds
+      DeriveFunctor
+      DeriveFoldable
+      DeriveGeneric
+      DeriveTraversable
+      DerivingStrategies
+      DerivingVia
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      GeneralizedNewtypeDeriving
+      ImportQualifiedPost
+      KindSignatures
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      Rank2Types
+      ScopedTypeVariables
+      StandaloneDeriving
+      TupleSections
+      TypeApplications
+      TypeOperators
+      TypeFamilies
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wpartial-fields -Wredundant-constraints -fno-warn-unused-top-binds
   build-depends:
-      WAVE
-    , base >=4.7 && <5
+      base >=4.7 && <5
     , containers
+    , dahdit >=0.8
+    , dahdit-audio >=0.8
+    , deepseq
     , either
     , lens
     , megaparsec
     , monad-par
     , optparse-applicative
+    , primitive
+    , proteaaudio
     , text
   default-language: Haskell2010
 
@@ -72,17 +104,48 @@ executable octune
       Paths_octune
   hs-source-dirs:
       app
-  ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N2 -O2
+  default-extensions:
+      BangPatterns
+      ConstraintKinds
+      DataKinds
+      DeriveFunctor
+      DeriveFoldable
+      DeriveGeneric
+      DeriveTraversable
+      DerivingStrategies
+      DerivingVia
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      GeneralizedNewtypeDeriving
+      ImportQualifiedPost
+      KindSignatures
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      Rank2Types
+      ScopedTypeVariables
+      StandaloneDeriving
+      TupleSections
+      TypeApplications
+      TypeOperators
+      TypeFamilies
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wpartial-fields -Wredundant-constraints -fno-warn-unused-top-binds -threaded -rtsopts -with-rtsopts=-N2 -O2
   build-depends:
-      WAVE
-    , base >=4.7 && <5
+      base >=4.7 && <5
     , containers
+    , dahdit >=0.8
+    , dahdit-audio >=0.8
+    , deepseq
     , either
     , lens
     , megaparsec
     , monad-par
     , octune
     , optparse-applicative
+    , primitive
+    , proteaaudio
     , text
   default-language: Haskell2010
 
@@ -93,16 +156,47 @@ test-suite octune-test
       Paths_octune
   hs-source-dirs:
       test
-  ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
+  default-extensions:
+      BangPatterns
+      ConstraintKinds
+      DataKinds
+      DeriveFunctor
+      DeriveFoldable
+      DeriveGeneric
+      DeriveTraversable
+      DerivingStrategies
+      DerivingVia
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      GeneralizedNewtypeDeriving
+      ImportQualifiedPost
+      KindSignatures
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      Rank2Types
+      ScopedTypeVariables
+      StandaloneDeriving
+      TupleSections
+      TypeApplications
+      TypeOperators
+      TypeFamilies
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wpartial-fields -Wredundant-constraints -fno-warn-unused-top-binds -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      WAVE
-    , base >=4.7 && <5
+      base >=4.7 && <5
     , containers
+    , dahdit >=0.8
+    , dahdit-audio >=0.8
+    , deepseq
     , either
     , lens
     , megaparsec
     , monad-par
     , octune
     , optparse-applicative
+    , primitive
+    , proteaaudio
     , text
   default-language: Haskell2010

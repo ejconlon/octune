@@ -3,5 +3,16 @@ resolver: lts-23.14
 packages:
 - .
 
+allow-newer: true
+allow-newer-deps:
+- proteaaudio
+
 extra-deps:
-- WAVE-0.1.6
+- aeson-via-0.2.3
+- data-sword-0.2.0.3
+- git: git@github.com:ejconlon/dahdit.git
+  commit: 1d9f0823d0fc0e406e59043dd721f0fb09ce518a
+  subdirs:
+  - dahdit
+  - dahdit-audio
+- proteaaudio-0.10.1

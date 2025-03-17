@@ -1,15 +1,30 @@
 module Octune.CodeGen.SamplesGen where
 
-import Control.Lens (dropping, foldlOf', traversed, (&), (.~))
+import Control.Lens (foldlOf', traversed)
 import Control.Monad (join)
 import Control.Monad.Par (Par, parMapM, runPar)
+import Dahdit.Audio.Wav.Simple (WAVESamples (..))
 import Data.Bits (Bits (shiftL))
 import Data.Int (Int32)
-import Data.List (foldl1')
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
-import Data.Sounds (InternalSamples, clapSamples, snareSamples)
-import Data.WAVE (WAVESamples)
+import Data.Sounds
+  ( InternalSamples
+  , SampleStream (..)
+  , clapSamples
+  , isampsConcat
+  , isampsEmpty
+  , isampsFill
+  , isampsFromList
+  , isampsLength
+  , isampsMap
+  , isampsMix
+  , isampsReplicate
+  , isampsToWave
+  , isampsTrim
+  , snareSamples
+  , streamToIsamps
+  )
 import Octune.Types.AST (LineFun (..), Waveform (..))
 import Octune.Types.Core (Core (..))
 import Octune.Types.Env (Env)
@@ -31,16 +46,8 @@ amplitude = 1 `shiftL` 27 + 1 `shiftL` 26
 semitoneFreqMultiplier :: Rational
 semitoneFreqMultiplier = 1.05946309435929
 
-multRat :: (Real a, Integral a) => Rational -> a -> a
+multRat :: (Integral a) => Rational -> a -> a
 multRat rat = round . (* rat) . toRational
-
--- {-# INLINE [0] zipWithHom #-}
-zipWithHom :: (a -> a -> a) -> [a] -> [a] -> [a]
-zipWithHom f = go
- where
-  go [] ys = ys
-  go xs [] = xs
-  go (x : xs) (y : ys) = f x y : go xs ys
 
 takeUntilOrN :: (a -> Bool) -> Int -> [a] -> ([a], [a])
 takeUntilOrN _ _ [] = ([], [])
@@ -57,11 +64,11 @@ beatsToNumFrames bpm frameRate beats =
 
 -- Combine a list of samples one after another
 sequenceSamples :: [InternalSamples] -> InternalSamples
-sequenceSamples = join
+sequenceSamples = isampsConcat
 
 -- Layer a list of samples over each other
 mergeSamples :: [InternalSamples] -> InternalSamples
-mergeSamples = foldl1' (zipWithHom (+))
+mergeSamples = isampsMix
 
 -- Sequence a list of samples,
 --   then repeat it a given number of times
@@ -69,7 +76,7 @@ repeatSamples :: Int -> [InternalSamples] -> InternalSamples
 repeatSamples n = sequenceSamples . replicate n . sequenceSamples
 
 modifySamplesVolume :: Rational -> InternalSamples -> InternalSamples
-modifySamplesVolume multiplier = fmap (multRat multiplier)
+modifySamplesVolume multiplier = isampsMap (multRat multiplier)
 
 subsectionOfSamples
   :: Int
@@ -79,7 +86,7 @@ subsectionOfSamples
   -> InternalSamples
   -> InternalSamples
 subsectionOfSamples bpm frameRate beg end =
-  take durationFrames . drop beginningFrames
+  isampsTrim beginningFrames durationFrames
  where
   beginningFrames = beatsToNumFrames bpm frameRate beg
   durationFrames = beatsToNumFrames bpm frameRate (end - beg)
@@ -98,7 +105,7 @@ waveformOrDefault = fromMaybe Square
 --   the samples for each variable is still only generated once,
 --   with the generated samples themselves being replicated
 genSamples :: Env Core -> Int -> Int -> Bool -> Core -> WAVESamples
-genSamples env bpm frameRate _memoize = fmap pure . runPar . go Nothing
+genSamples env bpm frameRate _memoize = isampsToWave . runPar . go Nothing
  where
   {-
   memoGenSamples :: Maybe Waveform -> Core -> WAVESamples
@@ -173,14 +180,14 @@ genSamples env bpm frameRate _memoize = fmap pure . runPar . go Nothing
 applyModifier :: NoteModifier -> InternalSamples -> InternalSamples
 applyModifier Detached samples =
   -- Make the last 20% of the note silent
-  samples & dropping keptSamples traversed .~ 0
- where
-  keptSamples = div (4 * length samples) 5
+  let len = isampsLength samples
+      off = div (4 * len) 5
+  in  isampsFill off (len - off) 0 samples
 applyModifier Staccato samples =
   -- Make the last 75% of the note silent
-  samples & dropping keptSamples traversed .~ 0
- where
-  keptSamples = div (length samples) 4
+  let len = isampsLength samples
+      off = div (isampsLength samples) 4
+  in  isampsFill off (len - off) 0 samples
 
 -- TODO: figure out how to use Folds to get `unmodifiedSamples`
 --       without sacrificing performance
@@ -189,25 +196,24 @@ noteToSamples bpm frameRate (Note noteMods beats sound) mWaveform =
   foldlOf' traversed (flip applyModifier) unmodifiedSamples noteMods
  where
   durationFrames = beatsToNumFrames bpm frameRate beats
-  unmodifiedSamples =
-    take durationFrames $ soundWave frameRate sound mWaveform
+  unmodifiedSamples = streamToIsamps 0 durationFrames (soundWave frameRate sound mWaveform)
 
 -- Samples representing a repeating wave of the given sound.
-soundWave :: Int -> Sound -> Maybe Waveform -> InternalSamples
-soundWave _ Rest _ = repeat 0
+soundWave :: Int -> Sound -> Maybe Waveform -> SampleStream
+soundWave _ Rest _ = SampleStream isampsEmpty isampsEmpty
 -- TODO: adjust based on framerate
 soundWave _ (Drum percussion) _ =
   case percussion of
-    Snare -> snareSamples ++ repeat 0
-    Clap -> clapSamples ++ repeat 0
+    Snare -> SampleStream snareSamples isampsEmpty
+    Clap -> SampleStream clapSamples isampsEmpty
 soundWave frameRate (Pitch letter accidental octave) mWaveform =
-  cycle $ case waveformOrDefault mWaveform of
+  SampleStream isampsEmpty $ case waveformOrDefault mWaveform of
     Square ->
-      mconcat
-        [ replicate firstHalf (-amplitude)
-        , replicate firstHalf amplitude
-        , replicate secondHalf (-amplitude)
-        , replicate secondHalf amplitude
+      isampsConcat
+        [ isampsReplicate firstHalf (-amplitude)
+        , isampsReplicate firstHalf amplitude
+        , isampsReplicate secondHalf (-amplitude)
+        , isampsReplicate secondHalf amplitude
         ]
      where
       (firstHalf, secondHalf) = splitHalf wavelenFrames
@@ -227,7 +233,7 @@ soundWave frameRate (Pitch letter accidental octave) mWaveform =
     Triangle ->
       -- Note: `2*amplitude` max amplitude to reach the same energy
       --       as a square wave with amplitude `amplitude`
-      mconcat
+      isampsConcat
         [ samplesFromEquation
             baseLineEqn
             [0 .. firstQuarter - 1]
@@ -260,7 +266,7 @@ soundWave frameRate (Pitch letter accidental octave) mWaveform =
     in  (firstHalf, secondHalf)
 
   samplesFromEquation :: (Int -> Int) -> [Int] -> InternalSamples
-  samplesFromEquation eqn = fmap (fromIntegral . eqn)
+  samplesFromEquation eqn = isampsFromList . fmap (fromIntegral . eqn)
 
   -- Frequency of `Sound letter accidental 4`
   -- Obtained from https://en.wikipedia.org/wiki/Piano_key_frequencies

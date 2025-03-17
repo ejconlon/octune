@@ -10,7 +10,7 @@ import Control.Lens
   , (^.)
   , _Just
   )
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Octune.Types.AST
   ( AST (..)
   , LineFun (..)
