@@ -20,14 +20,14 @@ import Dahdit.LiftedPrimArray
   , lengthLiftedPrimArray
   , liftedPrimArrayFromList
   , mapLiftedPrimArray
+  , mergeIntoLiftedPrimArray
   , mergeLiftedPrimArray
   , replicateLiftedPrimArray
   )
 import Dahdit.Sizes (ElemCount (..))
 import Data.Foldable (for_, toList)
 import Data.Int (Int32)
-import Data.Primitive.ByteArray (copyByteArray, newByteArray, sizeofByteArray, unsafeFreezeByteArray)
-import Data.STRef.Strict (newSTRef, readSTRef)
+import Data.Primitive.ByteArray (copyByteArray, fillByteArray, newByteArray, sizeofByteArray, unsafeFreezeByteArray)
 import Data.Sequence (Seq (..))
 import Paths_octune (getDataFileName)
 import System.IO.Unsafe (unsafeDupablePerformIO)
@@ -255,10 +255,15 @@ opAnnoLenF i = \case
 opAnnoLen :: Int -> Op -> Op2Anno Int
 opAnnoLen i (Op f) = let (ml, f') = opAnnoLenF i f in Op2Anno (Anno ml f')
 
-data OpEnv s = OpEnv {oeOff :: !Int, oeLen :: !Int, oeBuf :: !(MutableLiftedPrimArray s Int32)}
+data OpEnv s = OpEnv
+  { oeOff :: !Int
+  , oeBuf :: !(MutableLiftedPrimArray s Int32)
+  }
   deriving stock (Eq)
 
-data OpErr = OpErrInfer
+data OpErr
+  = OpErrInfer
+  | OpErrOverflow
   deriving stock (Eq, Ord, Show)
 
 instance Exception OpErr
@@ -271,7 +276,8 @@ liftST = lift . lift
 execOpM :: Int -> (forall s. OpM s ()) -> Either OpErr (LiftedPrimArray Int32)
 execOpM len act = runST $ do
   arr <- newByteArray len
-  let env = OpEnv {oeOff = 0, oeLen = len, oeBuf = MutableLiftedPrimArray arr}
+  fillByteArray arr 0 len 0
+  let env = OpEnv {oeOff = 0, oeBuf = MutableLiftedPrimArray arr}
   ea <- runExceptT (runReaderT act env)
   case ea of
     Left e -> pure (Left e)
@@ -286,34 +292,32 @@ opToWave op =
       arr <- execOpM len (goOpToWave an)
       Right (WAVESamples (QuietLiftedArray arr))
 
-handleOpSamp :: InternalSamples -> OpM s Int
-handleOpSamp s = do
-  OpEnv off len buf <- ask
+handleOpSamp :: Int -> InternalSamples -> OpM s ()
+handleOpSamp clen s = do
+  OpEnv off buf <- ask
   let src = unLiftedPrimArray (unInternalSamples s)
-      srcLen = sizeofByteArray (unLiftedPrimArray (unInternalSamples s))
-      srcLen' = min srcLen len
-  liftST (copyByteArray (unMutableLiftedPrimArray buf) off src 0 srcLen')
-  pure srcLen'
+  liftST (copyByteArray (unMutableLiftedPrimArray buf) off src 0 clen)
 
-handleOpMerge :: Seq r -> OpM s Int
-handleOpMerge rs = do
-  buf' <- asks oeLen >>= fmap MutableLiftedPrimArray . newByteArray
-  local (\env -> env {oeOff = 0, oeBuf = buf'}) $ do
-    maxUsedRef <- liftST (newSTRef 0)
-    for_ rs $ \r -> do
-      undefined
-    liftST (readSTRef maxUsedRef)
+handleOpReplicate :: Int -> Int -> Op2Anno Int -> OpM s ()
+handleOpReplicate clen n r = undefined
+
+handleOpConcat :: Int -> Seq (Op2Anno Int) -> OpM s ()
+handleOpConcat clen rs = undefined
+
+handleOpMerge :: Int -> Seq (Op2Anno Int) -> OpM s ()
+handleOpMerge clen rs = do
+  OpEnv origOff origBuf <- ask
+  tempArr <- newByteArray clen
+  local (\env -> env {oeOff = 0, oeBuf = MutableLiftedPrimArray tempArr}) $ do
+    for_ rs $ \_r -> do
+      fillByteArray tempArr 0 clen 0
+      tempBuf <- fmap LiftedPrimArray (unsafeFreezeByteArray tempArr)
+      mergeIntoLiftedPrimArray (+) origBuf (ElemCount origOff) tempBuf 0 (ElemCount clen)
 
 goOpToWave :: Op2Anno Int -> OpM s ()
-goOpToWave = undefined
-
--- goOpToWave :: Op2F (OpM s Int) -> OpM s Int
--- goOpToWave = \case
---   OpEmpty -> undefined
---   OpSamp s -> handleOpSamp s
---   OpBound l r -> local (\env -> env { oeLen = min l (oeLen env) }) r
---   OpCut _ r -> undefined
---   OpRepeat r -> undefined
---   OpReplicate n r -> undefined
---   OpConcat rs -> undefined
---   OpMerge rs -> handleOpMerge rs
+goOpToWave (Op2Anno (Anno clen f)) = case f of
+  Op2Empty -> pure ()
+  Op2Samp s -> handleOpSamp clen s
+  Op2Replicate n r -> handleOpReplicate clen n r
+  Op2Concat rs -> handleOpConcat clen rs
+  Op2Merge rs -> handleOpMerge clen rs
