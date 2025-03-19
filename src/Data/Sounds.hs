@@ -14,6 +14,7 @@ import Dahdit.LiftedPrimArray
   , MutableLiftedPrimArray (..)
   , cloneLiftedPrimArray
   , concatLiftedPrimArray
+  , copyLiftedPrimArray
   , emptyLiftedPrimArray
   , generateLiftedPrimArray
   , indexLiftedPrimArray
@@ -22,15 +23,30 @@ import Dahdit.LiftedPrimArray
   , mapLiftedPrimArray
   , mergeIntoLiftedPrimArray
   , mergeLiftedPrimArray
+  , newLiftedPrimArray
   , replicateLiftedPrimArray
+  , setLiftedPrimArray
+  , sizeofLiftedPrimArray
+  , uninitLiftedPrimArray
+  , unsafeFreezeLiftedPrimArray
+  , unsafeThawLiftedPrimArray
+  , zeroLiftedPrimArray
   )
-import Dahdit.Sizes (ElemCount (..))
+import Dahdit.Sizes (ByteCount (..), ElemCount (..))
 import Data.Foldable (for_, toList)
 import Data.Int (Int32)
-import Data.Primitive.ByteArray (copyByteArray, fillByteArray, newByteArray, sizeofByteArray, unsafeFreezeByteArray)
+import Data.Proxy (Proxy (..))
 import Data.Sequence (Seq (..))
 import Paths_octune (getDataFileName)
 import System.IO.Unsafe (unsafeDupablePerformIO)
+
+-- MONO only
+i32ByteToElemCount :: ByteCount -> ElemCount
+i32ByteToElemCount = ElemCount . (4 *) . unByteCount
+
+-- MONO only
+i32ElemToByteCount :: ElemCount -> ByteCount
+i32ElemToByteCount = ByteCount . (`div` 4) . unElemCount
 
 newtype InternalSamples = InternalSamples {unInternalSamples :: LiftedPrimArray Int32}
   deriving stock (Eq, Show)
@@ -42,16 +58,19 @@ isampsEmpty :: InternalSamples
 isampsEmpty = InternalSamples emptyLiftedPrimArray
 
 isampsIsNull :: InternalSamples -> Bool
-isampsIsNull = (0 ==) . isampsLength
+isampsIsNull = (0 ==) . isampsBytes
 
-isampsLength :: InternalSamples -> Int
-isampsLength = unElemCount . lengthLiftedPrimArray . unInternalSamples
+isampsLength :: InternalSamples -> ElemCount
+isampsLength = lengthLiftedPrimArray . unInternalSamples
 
-isampsIndex :: InternalSamples -> Int -> Int32
-isampsIndex s = indexLiftedPrimArray (unInternalSamples s) . ElemCount
+isampsBytes :: InternalSamples -> ByteCount
+isampsBytes = sizeofLiftedPrimArray . unInternalSamples
 
-isampsReplicate :: Int -> Int32 -> InternalSamples
-isampsReplicate len = InternalSamples . replicateLiftedPrimArray (ElemCount len)
+isampsIndex :: InternalSamples -> ElemCount -> Int32
+isampsIndex = indexLiftedPrimArray . unInternalSamples
+
+isampsReplicate :: ElemCount -> Int32 -> InternalSamples
+isampsReplicate len = InternalSamples . replicateLiftedPrimArray len
 
 isampsFromList :: [Int32] -> InternalSamples
 isampsFromList = InternalSamples . liftedPrimArrayFromList
@@ -62,17 +81,18 @@ isampsConcat = InternalSamples . concatLiftedPrimArray . fmap unInternalSamples
 isampsMix :: [InternalSamples] -> InternalSamples
 isampsMix = InternalSamples . mergeLiftedPrimArray 0 (+) . fmap unInternalSamples
 
-isampsTrim :: Int -> Int -> InternalSamples -> InternalSamples
-isampsTrim off len s = InternalSamples (cloneLiftedPrimArray (unInternalSamples s) (ElemCount off) (ElemCount len))
+isampsTrim :: ElemCount -> ElemCount -> InternalSamples -> InternalSamples
+isampsTrim off len s = InternalSamples (cloneLiftedPrimArray (unInternalSamples s) off len)
 
 isampsMap :: (Int32 -> Int32) -> InternalSamples -> InternalSamples
 isampsMap f = InternalSamples . mapLiftedPrimArray f . unInternalSamples
 
-isampsFill :: Int -> Int -> Int32 -> InternalSamples -> InternalSamples
-isampsFill off len val s =
-  let f = indexLiftedPrimArray (unInternalSamples s)
-      g pos@(ElemCount ipos) = if ipos >= off && ipos < off + len then val else f pos
-  in  InternalSamples (generateLiftedPrimArray (ElemCount (isampsLength s)) g)
+isampsFill :: ElemCount -> ElemCount -> Int32 -> InternalSamples -> InternalSamples
+isampsFill off len val (InternalSamples sarr) = runST $ do
+  let darr = cloneLiftedPrimArray sarr 0 len
+  darr' <- unsafeThawLiftedPrimArray darr
+  setLiftedPrimArray darr' off len val
+  pure (InternalSamples darr)
 
 isampsToWave :: InternalSamples -> WAVESamples
 isampsToWave = WAVESamples . QuietLiftedArray . unInternalSamples
@@ -86,7 +106,7 @@ data SampleStream = SampleStream
   }
   deriving stock (Eq, Show)
 
-streamRun :: SampleStream -> Int -> Int32
+streamRun :: SampleStream -> ElemCount -> Int32
 streamRun (SampleStream fixed repeated) =
   let flen = isampsLength fixed
       rlen = isampsLength repeated
@@ -94,14 +114,14 @@ streamRun (SampleStream fixed repeated) =
         if
           | pos < 0 -> 0
           | pos < flen ->
-              indexLiftedPrimArray (unInternalSamples fixed) (ElemCount pos)
+              indexLiftedPrimArray (unInternalSamples fixed) pos
           | rlen == 0 -> 0
           | otherwise ->
-              indexLiftedPrimArray (unInternalSamples repeated) (ElemCount (mod (pos - flen) rlen))
+              indexLiftedPrimArray (unInternalSamples repeated) (mod (pos - flen) rlen)
 
-streamToIsamps :: Int -> Int -> SampleStream -> InternalSamples
+streamToIsamps :: ElemCount -> ElemCount -> SampleStream -> InternalSamples
 streamToIsamps off len t =
-  InternalSamples (generateLiftedPrimArray (ElemCount len) (streamRun t . (off +) . unElemCount))
+  InternalSamples (generateLiftedPrimArray len (streamRun t . (off +)))
 
 assertMono :: WAVEHeader -> IO ()
 assertMono hdr = unless (waveNumChannels hdr == 1) (fail "sample wav must be mono")
@@ -136,7 +156,7 @@ dumpSamples isamps = writeSamples hdr isamps
       { waveNumChannels = 1
       , waveFrameRate = 48000
       , waveBitsPerSample = 16
-      , waveFrames = Just (isampsLength isamps)
+      , waveFrames = Just (unElemCount (isampsLength isamps))
       }
 
 dumpAllSamples :: IO ()
@@ -147,10 +167,13 @@ dumpAllSamples = do
 data OpF r
   = OpEmpty
   | OpSamp !InternalSamples
-  | OpBound !Int r
-  | OpCut !Rational r
+  | -- | Invariant: length is in (0, inf)
+    OpBound !ElemCount r
+  | -- | Invariant: fraction in (0, 1)
+    OpCut !Rational r
   | OpRepeat r
-  | OpReplicate !Int r
+  | -- | Invariant: repetitions in (0, inf)
+    OpReplicate !Int r
   | OpConcat !(Seq r)
   | OpMerge !(Seq r)
   deriving stock (Eq, Show, Functor)
@@ -163,18 +186,18 @@ cataOp f = go
  where
   go = f . fmap go . unOp
 
-opInferLenF :: OpF (Maybe Int) -> Maybe Int
+opInferLenF :: OpF (Maybe ElemCount) -> Maybe ElemCount
 opInferLenF = \case
   OpEmpty -> Nothing
   OpSamp s -> Just (isampsLength s)
   OpBound l _ -> Just l
   OpCut _ r -> r
   OpRepeat _ -> Nothing
-  OpReplicate n r -> fmap (n *) r
+  OpReplicate n r -> fmap (fromIntegral n *) r
   OpConcat rs -> fmap sum (sequence rs)
   OpMerge rs -> fmap maximum (sequence rs)
 
-opInferLen :: Op -> Maybe Int
+opInferLen :: Op -> Maybe ElemCount
 opInferLen = cataOp opInferLenF
 
 data Anno k v = Anno {annoKey :: k, annoVal :: v}
@@ -201,12 +224,12 @@ cataOp2Anno f = go
 -- Properties:
 -- 1. If it's possible to infer a length, it will be GTE the calculated length.
 -- 2. The calculated length will be LTE available length.
-opAnnoLenF :: Int -> OpF Op -> (Int, Op2F (Op2Anno Int))
+opAnnoLenF :: ElemCount -> OpF Op -> (ElemCount, Op2F (Op2Anno ElemCount))
 opAnnoLenF i = \case
   OpEmpty ->
     (0, Op2Empty)
   OpSamp s ->
-    let l' = min i (sizeofByteArray (unLiftedPrimArray (unInternalSamples s)))
+    let l' = min i (lengthLiftedPrimArray (unInternalSamples s))
     in  (l', Op2Samp s)
   OpBound l r ->
     let l' = min i l
@@ -221,7 +244,7 @@ opAnnoLenF i = \case
   OpRepeat r ->
     let (ml, f) = opAnnoLenF i (unOp r)
         (n, m) = divMod i ml
-        r' = Op2Replicate n (Op2Anno (Anno ml f))
+        r' = Op2Replicate (unElemCount n) (Op2Anno (Anno ml f))
     in  if m == 0
           then
             (i, r')
@@ -231,9 +254,9 @@ opAnnoLenF i = \case
                 q'' = Op2Anno (Anno ml' f')
             in  (ml * n + ml', Op2Concat (q' :<| q'' :<| Empty))
   OpReplicate n r ->
-    let l' = div i n
+    let l' = div i (ElemCount n)
         (ml, f) = opAnnoLenF l' (unOp r)
-    in  (ml * n, Op2Replicate n (Op2Anno (Anno ml f)))
+    in  (ml * ElemCount n, Op2Replicate n (Op2Anno (Anno ml f)))
   OpConcat rs ->
     let g !tot !qs = \case
           Empty -> (tot, Op2Concat qs)
@@ -252,11 +275,11 @@ opAnnoLenF i = \case
         ml = maximum (fmap fst (toList ps))
     in  (ml, Op2Merge (fmap (\(ml', f') -> Op2Anno (Anno ml' f')) ps))
 
-opAnnoLen :: Int -> Op -> Op2Anno Int
+opAnnoLen :: ElemCount -> Op -> Op2Anno ElemCount
 opAnnoLen i (Op f) = let (ml, f') = opAnnoLenF i f in Op2Anno (Anno ml f')
 
 data OpEnv s = OpEnv
-  { oeOff :: !Int
+  { oeOff :: !ElemCount
   , oeBuf :: !(MutableLiftedPrimArray s Int32)
   }
   deriving stock (Eq)
@@ -273,15 +296,14 @@ type OpM s = ReaderT (OpEnv s) (ExceptT OpErr (ST s))
 liftST :: ST s a -> OpM s a
 liftST = lift . lift
 
-execOpM :: Int -> (forall s. OpM s ()) -> Either OpErr (LiftedPrimArray Int32)
+execOpM :: ElemCount -> (forall s. OpM s ()) -> Either OpErr (LiftedPrimArray Int32)
 execOpM len act = runST $ do
-  arr <- newByteArray len
-  fillByteArray arr 0 len 0
-  let env = OpEnv {oeOff = 0, oeBuf = MutableLiftedPrimArray arr}
+  buf <- newLiftedPrimArray len (Proxy @Int32)
+  let env = OpEnv {oeOff = 0, oeBuf = buf}
   ea <- runExceptT (runReaderT act env)
   case ea of
     Left e -> pure (Left e)
-    Right () -> fmap (Right . LiftedPrimArray) (unsafeFreezeByteArray arr)
+    Right () -> fmap Right (unsafeFreezeLiftedPrimArray buf)
 
 opToWave :: Op -> Either OpErr WAVESamples
 opToWave op =
@@ -292,29 +314,40 @@ opToWave op =
       arr <- execOpM len (goOpToWave an)
       Right (WAVESamples (QuietLiftedArray arr))
 
-handleOpSamp :: Int -> InternalSamples -> OpM s ()
-handleOpSamp clen s = do
+handleOpSamp :: ElemCount -> InternalSamples -> OpM s ()
+handleOpSamp clen (InternalSamples src) = do
   OpEnv off buf <- ask
-  let src = unLiftedPrimArray (unInternalSamples s)
-  liftST (copyByteArray (unMutableLiftedPrimArray buf) off src 0 clen)
+  liftST (copyLiftedPrimArray buf off src 0 clen)
 
-handleOpReplicate :: Int -> Int -> Op2Anno Int -> OpM s ()
-handleOpReplicate clen n r = undefined
+handleOpReplicate :: ElemCount -> Int -> Op2Anno ElemCount -> OpM s ()
+handleOpReplicate clen n r = do
+  OpEnv off buf <- ask
+  goOpToWave r
+  for_ [1 .. n - 1] $ \i -> do
+    let newOff = off + ElemCount i * clen
+    buf' <- unsafeFreezeLiftedPrimArray buf
+    copyLiftedPrimArray buf newOff buf' off clen
 
-handleOpConcat :: Int -> Seq (Op2Anno Int) -> OpM s ()
-handleOpConcat clen rs = undefined
+handleOpConcat :: ElemCount -> Seq (Op2Anno ElemCount) -> OpM s ()
+handleOpConcat clen rs = do
+  off <- asks oeOff
+  for_ (zip [0 ..] (toList rs)) $ \(i, r) -> do
+    let off' = off + i * clen
+    local (\env -> env {oeOff = off'}) $ do
+      goOpToWave r
 
-handleOpMerge :: Int -> Seq (Op2Anno Int) -> OpM s ()
+handleOpMerge :: ElemCount -> Seq (Op2Anno ElemCount) -> OpM s ()
 handleOpMerge clen rs = do
-  OpEnv origOff origBuf <- ask
-  tempArr <- newByteArray clen
-  local (\env -> env {oeOff = 0, oeBuf = MutableLiftedPrimArray tempArr}) $ do
-    for_ rs $ \_r -> do
-      fillByteArray tempArr 0 clen 0
-      tempBuf <- fmap LiftedPrimArray (unsafeFreezeByteArray tempArr)
-      mergeIntoLiftedPrimArray (+) origBuf (ElemCount origOff) tempBuf 0 (ElemCount clen)
+  OpEnv off buf <- ask
+  tmp <- liftST (uninitLiftedPrimArray clen (Proxy @Int32))
+  local (\env -> env {oeOff = 0, oeBuf = tmp}) $ do
+    for_ rs $ \r -> do
+      liftST (zeroLiftedPrimArray tmp 0 clen)
+      goOpToWave r
+      tmp' <- liftST (unsafeFreezeLiftedPrimArray tmp)
+      liftST (mergeIntoLiftedPrimArray (+) buf off tmp' 0 clen)
 
-goOpToWave :: Op2Anno Int -> OpM s ()
+goOpToWave :: Op2Anno ElemCount -> OpM s ()
 goOpToWave (Op2Anno (Anno clen f)) = case f of
   Op2Empty -> pure ()
   Op2Samp s -> handleOpSamp clen s

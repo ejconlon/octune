@@ -6,13 +6,14 @@ import Control.Monad (void, when)
 import Dahdit.Audio.Common (rethrow)
 import Dahdit.Audio.Wav.Simple qualified as DAWS
 import Dahdit.Iface (encode)
+import Dahdit.Sizes (ElemCount (..))
 import Data.Sounds (InternalSamples, dumpSamples, isampsLength)
 import Sound.ProteaAudio qualified as P
 
 play :: InternalSamples -> IO ()
 play samps = do
   let sr = 48000
-      micros = div (1000000 * isampsLength samps) sr
+      micros = div (1000000 * unElemCount (isampsLength samps)) sr
   simpleWav <- dumpSamples samps
   complexWav <- rethrow (DAWS.toComplex simpleWav)
   strWav <- encode complexWav

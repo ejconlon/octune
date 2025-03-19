@@ -4,6 +4,7 @@ import Control.Lens (foldlOf', traversed)
 import Control.Monad (join)
 import Control.Monad.Par (Par, parMapM, runPar)
 import Dahdit.Audio.Wav.Simple (WAVESamples (..))
+import Dahdit.Sizes (ElemCount (..))
 import Data.Bits (Bits (shiftL))
 import Data.Int (Int32)
 import Data.Map.Strict qualified as Map
@@ -86,7 +87,7 @@ subsectionOfSamples
   -> InternalSamples
   -> InternalSamples
 subsectionOfSamples bpm frameRate beg end =
-  isampsTrim beginningFrames durationFrames
+  isampsTrim (ElemCount beginningFrames) (ElemCount durationFrames)
  where
   beginningFrames = beatsToNumFrames bpm frameRate beg
   durationFrames = beatsToNumFrames bpm frameRate (end - beg)
@@ -196,7 +197,7 @@ noteToSamples bpm frameRate (Note noteMods beats sound) mWaveform =
   foldlOf' traversed (flip applyModifier) unmodifiedSamples noteMods
  where
   durationFrames = beatsToNumFrames bpm frameRate beats
-  unmodifiedSamples = streamToIsamps 0 durationFrames (soundWave frameRate sound mWaveform)
+  unmodifiedSamples = streamToIsamps 0 (ElemCount durationFrames) (soundWave frameRate sound mWaveform)
 
 -- Samples representing a repeating wave of the given sound.
 soundWave :: Int -> Sound -> Maybe Waveform -> SampleStream
@@ -210,10 +211,10 @@ soundWave frameRate (Pitch letter accidental octave) mWaveform =
   SampleStream isampsEmpty $ case waveformOrDefault mWaveform of
     Square ->
       isampsConcat
-        [ isampsReplicate firstHalf (-amplitude)
-        , isampsReplicate firstHalf amplitude
-        , isampsReplicate secondHalf (-amplitude)
-        , isampsReplicate secondHalf amplitude
+        [ isampsReplicate (ElemCount firstHalf) (-amplitude)
+        , isampsReplicate (ElemCount firstHalf) amplitude
+        , isampsReplicate (ElemCount secondHalf) (-amplitude)
+        , isampsReplicate (ElemCount secondHalf) amplitude
         ]
      where
       (firstHalf, secondHalf) = splitHalf wavelenFrames
