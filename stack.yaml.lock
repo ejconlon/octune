@@ -19,20 +19,20 @@ packages:
   original:
     hackage: data-sword-0.2.0.3
 - completed:
-    commit: f1ff6655996b35a2aaf1cc4e74c5c4991b4bdc5f
+    commit: f684369c5c4b951ce26f42dbb265c71d0b016e59
     git: git@github.com:ejconlon/dahdit.git
     name: dahdit
     pantry-tree:
-      sha256: d0cfb918e47fcaa62c14f3f3674d2eeb018bdcf30792094d99e363de1fe7b701
+      sha256: 1e2c6137f9f7632b2d5e32af3c5d483e3aacba0a70c259442eaf11a3e5cf3cb2
       size: 1188
     subdir: dahdit
     version: 0.8.0
   original:
-    commit: f1ff6655996b35a2aaf1cc4e74c5c4991b4bdc5f
+    commit: f684369c5c4b951ce26f42dbb265c71d0b016e59
     git: git@github.com:ejconlon/dahdit.git
     subdir: dahdit
 - completed:
-    commit: f1ff6655996b35a2aaf1cc4e74c5c4991b4bdc5f
+    commit: f684369c5c4b951ce26f42dbb265c71d0b016e59
     git: git@github.com:ejconlon/dahdit.git
     name: dahdit-audio
     pantry-tree:
@@ -41,7 +41,7 @@ packages:
     subdir: dahdit-audio
     version: 0.8.0
   original:
-    commit: f1ff6655996b35a2aaf1cc4e74c5c4991b4bdc5f
+    commit: f684369c5c4b951ce26f42dbb265c71d0b016e59
     git: git@github.com:ejconlon/dahdit.git
     subdir: dahdit-audio
 - completed:

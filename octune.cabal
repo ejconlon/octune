@@ -32,6 +32,7 @@ library
       Data.Sounds
       Octune.Annotate
       Octune.CodeGen
+      Octune.CodeGen.OpGen
       Octune.CodeGen.SamplesGen
       Octune.CodeGen.WAVEGen
       Octune.NameResolution
@@ -91,10 +92,12 @@ library
     , lens
     , megaparsec
     , monad-par
+    , mtl
     , optparse-applicative
     , primitive
     , proteaaudio
     , text
+    , transformers
   default-language: Haskell2010
 
 executable octune
@@ -142,11 +145,13 @@ executable octune
     , lens
     , megaparsec
     , monad-par
+    , mtl
     , octune
     , optparse-applicative
     , primitive
     , proteaaudio
     , text
+    , transformers
   default-language: Haskell2010
 
 test-suite octune-test
@@ -194,9 +199,11 @@ test-suite octune-test
     , lens
     , megaparsec
     , monad-par
+    , mtl
     , octune
     , optparse-applicative
     , primitive
     , proteaaudio
     , text
+    , transformers
   default-language: Haskell2010

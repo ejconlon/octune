@@ -1,11 +1,17 @@
 module Data.Sounds where
 
 import Control.DeepSeq (NFData (..))
+import Control.Exception (Exception)
 import Control.Monad (unless, (>=>))
+import Control.Monad.Except (ExceptT, runExceptT)
+import Control.Monad.Reader (Reader, ReaderT (..), ask, asks, local, runReader)
+import Control.Monad.ST.Strict (ST, runST)
+import Control.Monad.Trans (lift)
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
 import Dahdit.LiftedPrimArray
   ( LiftedPrimArray (..)
+  , MutableLiftedPrimArray (..)
   , cloneLiftedPrimArray
   , concatLiftedPrimArray
   , emptyLiftedPrimArray
@@ -18,8 +24,11 @@ import Dahdit.LiftedPrimArray
   , replicateLiftedPrimArray
   )
 import Dahdit.Sizes (ElemCount (..))
-import Data.Foldable (for_)
+import Data.Foldable (for_, toList)
 import Data.Int (Int32)
+import Data.Primitive.ByteArray (copyByteArray, newByteArray, sizeofByteArray, unsafeFreezeByteArray)
+import Data.STRef.Strict (newSTRef, readSTRef)
+import Data.Sequence (Seq (..))
 import Paths_octune (getDataFileName)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
@@ -134,3 +143,177 @@ dumpAllSamples :: IO ()
 dumpAllSamples = do
   let items = [] :: [(String, InternalSamples)]
   for_ items $ \(name, samps) -> dumpSamples samps >>= putWAVEFile ("data/" ++ name ++ ".wav")
+
+data OpF r
+  = OpEmpty
+  | OpSamp !InternalSamples
+  | OpBound !Int r
+  | OpCut !Rational r
+  | OpRepeat r
+  | OpReplicate !Int r
+  | OpConcat !(Seq r)
+  | OpMerge !(Seq r)
+  deriving stock (Eq, Show, Functor)
+
+newtype Op = Op {unOp :: OpF Op}
+  deriving stock (Eq, Show)
+
+cataOp :: (OpF r -> r) -> Op -> r
+cataOp f = go
+ where
+  go = f . fmap go . unOp
+
+opInferLenF :: OpF (Maybe Int) -> Maybe Int
+opInferLenF = \case
+  OpEmpty -> Nothing
+  OpSamp s -> Just (isampsLength s)
+  OpBound l _ -> Just l
+  OpCut _ r -> r
+  OpRepeat _ -> Nothing
+  OpReplicate n r -> fmap (n *) r
+  OpConcat rs -> fmap sum (sequence rs)
+  OpMerge rs -> fmap maximum (sequence rs)
+
+opInferLen :: Op -> Maybe Int
+opInferLen = cataOp opInferLenF
+
+data Anno k v = Anno {annoKey :: k, annoVal :: v}
+  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
+
+data Op2F r
+  = Op2Empty
+  | Op2Samp !InternalSamples
+  | Op2Replicate !Int r
+  | Op2Concat !(Seq r)
+  | Op2Merge !(Seq r)
+  deriving stock (Eq, Show, Functor)
+
+newtype Op2Anno k = Op2Anno {unOp2Anno :: Anno k (Op2F (Op2Anno k))}
+  deriving stock (Eq, Show)
+
+cataOp2Anno :: (Op2F r -> Reader k r) -> Op2Anno k -> r
+cataOp2Anno f = go
+ where
+  go (Op2Anno (Anno k v)) = runReader (f (fmap go v)) k
+
+-- Given available length and original definition,
+-- Returns (calculated length, annotated translation).
+-- Properties:
+-- 1. If it's possible to infer a length, it will be GTE the calculated length.
+-- 2. The calculated length will be LTE available length.
+opAnnoLenF :: Int -> OpF Op -> (Int, Op2F (Op2Anno Int))
+opAnnoLenF i = \case
+  OpEmpty ->
+    (0, Op2Empty)
+  OpSamp s ->
+    let l' = min i (sizeofByteArray (unLiftedPrimArray (unInternalSamples s)))
+    in  (l', Op2Samp s)
+  OpBound l r ->
+    let l' = min i l
+        (ml, f) = opAnnoLenF l' (unOp r)
+        q' = Op2Anno (Anno ml f)
+    in  (l', if ml == l' then f else Op2Concat (q' :<| Empty))
+  OpCut x r ->
+    let l' = min i (floor (x * fromIntegral i))
+        (ml, f) = opAnnoLenF l' (unOp r)
+        q' = Op2Anno (Anno ml f)
+    in  (ml, if ml == l' then f else Op2Concat (q' :<| Empty))
+  OpRepeat r ->
+    let (ml, f) = opAnnoLenF i (unOp r)
+        (n, m) = divMod i ml
+        r' = Op2Replicate n (Op2Anno (Anno ml f))
+    in  if m == 0
+          then
+            (i, r')
+          else
+            let q' = Op2Anno (Anno (ml * n) r')
+                (ml', f') = opAnnoLenF m (unOp r)
+                q'' = Op2Anno (Anno ml' f')
+            in  (ml * n + ml', Op2Concat (q' :<| q'' :<| Empty))
+  OpReplicate n r ->
+    let l' = div i n
+        (ml, f) = opAnnoLenF l' (unOp r)
+    in  (ml * n, Op2Replicate n (Op2Anno (Anno ml f)))
+  OpConcat rs ->
+    let g !tot !qs = \case
+          Empty -> (tot, Op2Concat qs)
+          p :<| ps ->
+            let left = i - tot
+            in  if left > 0
+                  then
+                    let (ml, f) = opAnnoLenF left (unOp p)
+                        tot' = tot + ml
+                        qs' = qs :|> Op2Anno (Anno ml f)
+                    in  g tot' qs' ps
+                  else (tot, Op2Concat qs)
+    in  g 0 Empty rs
+  OpMerge rs ->
+    let ps = fmap (opAnnoLenF i . unOp) rs
+        ml = maximum (fmap fst (toList ps))
+    in  (ml, Op2Merge (fmap (\(ml', f') -> Op2Anno (Anno ml' f')) ps))
+
+opAnnoLen :: Int -> Op -> Op2Anno Int
+opAnnoLen i (Op f) = let (ml, f') = opAnnoLenF i f in Op2Anno (Anno ml f')
+
+data OpEnv s = OpEnv {oeOff :: !Int, oeLen :: !Int, oeBuf :: !(MutableLiftedPrimArray s Int32)}
+  deriving stock (Eq)
+
+data OpErr = OpErrInfer
+  deriving stock (Eq, Ord, Show)
+
+instance Exception OpErr
+
+type OpM s = ReaderT (OpEnv s) (ExceptT OpErr (ST s))
+
+liftST :: ST s a -> OpM s a
+liftST = lift . lift
+
+execOpM :: Int -> (forall s. OpM s ()) -> Either OpErr (LiftedPrimArray Int32)
+execOpM len act = runST $ do
+  arr <- newByteArray len
+  let env = OpEnv {oeOff = 0, oeLen = len, oeBuf = MutableLiftedPrimArray arr}
+  ea <- runExceptT (runReaderT act env)
+  case ea of
+    Left e -> pure (Left e)
+    Right () -> fmap (Right . LiftedPrimArray) (unsafeFreezeByteArray arr)
+
+opToWave :: Op -> Either OpErr WAVESamples
+opToWave op =
+  case opInferLen op of
+    Nothing -> Left OpErrInfer
+    Just len -> do
+      let an = opAnnoLen len op
+      arr <- execOpM len (goOpToWave an)
+      Right (WAVESamples (QuietLiftedArray arr))
+
+handleOpSamp :: InternalSamples -> OpM s Int
+handleOpSamp s = do
+  OpEnv off len buf <- ask
+  let src = unLiftedPrimArray (unInternalSamples s)
+      srcLen = sizeofByteArray (unLiftedPrimArray (unInternalSamples s))
+      srcLen' = min srcLen len
+  liftST (copyByteArray (unMutableLiftedPrimArray buf) off src 0 srcLen')
+  pure srcLen'
+
+handleOpMerge :: Seq r -> OpM s Int
+handleOpMerge rs = do
+  buf' <- asks oeLen >>= fmap MutableLiftedPrimArray . newByteArray
+  local (\env -> env {oeOff = 0, oeBuf = buf'}) $ do
+    maxUsedRef <- liftST (newSTRef 0)
+    for_ rs $ \r -> do
+      undefined
+    liftST (readSTRef maxUsedRef)
+
+goOpToWave :: Op2Anno Int -> OpM s ()
+goOpToWave = undefined
+
+-- goOpToWave :: Op2F (OpM s Int) -> OpM s Int
+-- goOpToWave = \case
+--   OpEmpty -> undefined
+--   OpSamp s -> handleOpSamp s
+--   OpBound l r -> local (\env -> env { oeLen = min l (oeLen env) }) r
+--   OpCut _ r -> undefined
+--   OpRepeat r -> undefined
+--   OpReplicate n r -> undefined
+--   OpConcat rs -> undefined
+--   OpMerge rs -> handleOpMerge rs
