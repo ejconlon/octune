@@ -19,19 +19,19 @@ data LineFun
   | -- Repeating sequence of samples
     Repeat !Int
   | -- Set waveform to use
-    UsingWaveform Waveform
+    UsingWaveform !Waveform
   | -- Set amplitude of generated samples
-    Volume Rational
+    Volume !Rational
   | -- Take the subsection of a sequence of samples between
     --   the ends of the given beats
     -- Note: the end of the 0th beat is the beginning of the 1st beat
-    Subsection Beats Beats
+    Subsection !Beats !Beats
   deriving (Show, Read, Eq)
 
 data QualifiedName
   = QualName
-  { moduleQual :: [Text]
-  , variableName :: Text
+  { moduleQual :: ![Text]
+  , variableName :: !Text
   }
   deriving (Show, Read, Eq)
 
@@ -41,16 +41,16 @@ instance Ord QualifiedName where
 
 data AST a
   = -- Decls in a file
-    File a [Text] [AST a]
-  | Decl a Text (AST a)
+    File !a ![Text] ![AST a]
+  | Decl !a !Text (AST a)
   | -- Song expression: (BPM, LineExpr)
-    Song a !Int (AST a)
+    Song !a !Int (AST a)
   | -- Line expressions
-    Var a QualifiedName
-  | LineNote a Note
-  | LineApp a !LineFun [AST a]
+    Var !a !QualifiedName
+  | LineNote !a !Note
+  | LineApp !a !LineFun ![AST a]
   | -- Compile-time check indicators
-    BeatsAssertion a (Maybe Beats)
+    BeatsAssertion !a !(Maybe Beats)
   deriving (Show, Read, Eq)
 
 annotation :: Lens' (AST a) a

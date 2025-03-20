@@ -7,9 +7,9 @@ import Octune.Types.Note (Note)
 -- Resulting from after static analysis
 data Core
   = CoreSong !Int Core
-  | CoreVar QualifiedName
-  | CoreNote Note
-  | CoreApp !LineFun [Core]
+  | CoreVar !QualifiedName
+  | CoreNote !Note
+  | CoreApp !LineFun ![Core]
   deriving (Show, Read, Eq)
 
 coreEnv :: Env (AST a) -> Env Core

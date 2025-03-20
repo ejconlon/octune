@@ -17,6 +17,7 @@ description: Please see the README on GitHub at <https://github.com/githubuser/o
 
 dependencies:
 - base >= 4.7 && < 5
+- abstract-par
 - containers
 - dahdit >= 0.8
 - dahdit-audio >= 0.8

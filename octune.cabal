@@ -31,7 +31,7 @@ library
       Data.Combinator
       Data.Sounds
       Octune.Annotate
-      Octune.CodeGen.OpGen
+      Octune.CodeGen.NewSamplesGen
       Octune.CodeGen.SamplesGen
       Octune.CodeGen.WAVEGen
       Octune.NameResolution
@@ -79,7 +79,8 @@ library
       TypeFamilies
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wpartial-fields -Wredundant-constraints -fno-warn-unused-top-binds
   build-depends:
-      base >=4.7 && <5
+      abstract-par
+    , base >=4.7 && <5
     , containers
     , dahdit >=0.8
     , dahdit-audio >=0.8
@@ -133,7 +134,8 @@ executable octune
       TypeFamilies
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wpartial-fields -Wredundant-constraints -fno-warn-unused-top-binds -threaded -rtsopts -with-rtsopts=-N2 -O2
   build-depends:
-      base >=4.7 && <5
+      abstract-par
+    , base >=4.7 && <5
     , containers
     , dahdit >=0.8
     , dahdit-audio >=0.8
@@ -187,7 +189,8 @@ test-suite octune-test
       TypeFamilies
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wpartial-fields -Wredundant-constraints -fno-warn-unused-top-binds -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      base >=4.7 && <5
+      abstract-par
+    , base >=4.7 && <5
     , containers
     , dahdit >=0.8
     , dahdit-audio >=0.8
