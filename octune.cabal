@@ -99,6 +99,7 @@ executable octune
   main-is: Main.hs
   other-modules:
       Config
+      Debug
       Paths_octune
   hs-source-dirs:
       app

@@ -24,3 +24,8 @@ cabal.project.local~
 out/
 octune.prof
 octune.prof.html
+octune.hp.txt
+octune.hp
+C*.svg
+octune.eventlog
+octune.eventlog.html

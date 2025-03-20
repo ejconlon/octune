@@ -31,7 +31,7 @@ docs:
 
 # Install tool deps
 deps:
-  stack build --copy-compiler-tool hlint fourmolu apply-refact
+  stack build --copy-compiler-tool hlint fourmolu apply-refact hp2pretty eventlog2html
 
 # Format with fourmolu
 format:
@@ -56,14 +56,42 @@ sample-gen-dir target:
   stack exec octune -- -o out/{{target}} samples/{{target}}/*.otn
 
 # Profile wav gen for a single file
-sample-gen-prof target:
+sample-gen-prof target: clean-profile
   mkdir -p out
   stack build --profile
   stack exec --profile octune -- +RTS -p -RTS -o out/{{target}} samples/{{target}}.otn
   stack exec profiteur -- octune.prof
 
-# Profile wav gen for a single file
-sample-gen-dbg-dir target:
+# Catch exceptions
+sample-gen-dbg-dir target: clean-profile
   mkdir -p out
   stack build --profile
   stack exec --profile octune -- +RTS -xc -RTS -o out/{{target}} samples/{{target}}/*.otn
+
+# Profile heap
+sample-gen-heap-dir target: clean-profile
+  mkdir -p out
+  stack build --profile
+  stack exec --profile octune -- +RTS -hc -xc -RTS -o out/{{target}} samples/{{target}}/*.otn || true
+  stack exec hp2pretty -- --key octune.hp.txt octune.hp
+  rm -f C*.svg
+
+# event_args := "-hc -l -pa --eventlog-flush-interval=0.1"
+event_args := "-hc -l -pa"
+
+# Profile by event log
+sample-gen-event-dir target: clean-profile
+  mkdir -p out
+  stack build --profile
+  stack exec --profile octune -- +RTS {{event_args}} -RTS -o out/{{target}} samples/{{target}}/*.otn || true
+  stack exec eventlog2html -- octune.eventlog
+
+# Profile by event log
+sample-gen-event target: clean-profile
+  mkdir -p out
+  stack build --profile
+  stack exec --profile octune -- +RTS {{event_args}} -RTS -o out/{{target}} samples/{{target}}.otn
+  stack exec eventlog2html -- octune.eventlog
+
+clean-profile:
+  rm -f octune.hp octune.prof octune.prof.html octune.hp octune.hp.txt octune.eventlog octune.eventlog.html octune.svg
