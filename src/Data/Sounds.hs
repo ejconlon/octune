@@ -4,41 +4,110 @@ import Control.DeepSeq (NFData (..))
 import Control.Exception (Exception)
 import Control.Monad (unless, when, (>=>))
 import Control.Monad.Except (ExceptT, runExceptT)
+import Control.Monad.Primitive (PrimMonad (..))
 import Control.Monad.Reader (Reader, ReaderT (..), ask, asks, local, runReader)
 import Control.Monad.ST.Strict (ST, runST)
 import Control.Monad.Trans (lift)
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
-import Dahdit.LiftedPrimArray
-  ( LiftedPrimArray (..)
-  , MutableLiftedPrimArray (..)
-  , cloneLiftedPrimArray
-  , concatLiftedPrimArray
-  , constantLiftedPrimArray
-  , copyLiftedPrimArray
-  , emptyLiftedPrimArray
-  , generateLiftedPrimArray
-  , indexLiftedPrimArray
-  , lengthLiftedPrimArray
-  , liftedPrimArrayFromList
-  , mapLiftedPrimArray
-  , mergeIntoLiftedPrimArray
-  , mergeLiftedPrimArray
-  , newLiftedPrimArray
-  , replicateLiftedPrimArray
-  , setLiftedPrimArray
-  , sizeofLiftedPrimArray
-  , uninitLiftedPrimArray
-  , unsafeFreezeLiftedPrimArray
-  , zeroLiftedPrimArray
-  )
+import Dahdit.LiftedPrimArray (LiftedPrimArray (..))
 import Dahdit.Sizes (ByteCount (..), ElemCount (..))
 import Data.Foldable (for_, toList)
 import Data.Int (Int32)
-import Data.Proxy (Proxy (..))
+import Data.Primitive.ByteArray (ByteArray (..))
+import Data.Primitive.PrimArray
+  ( MutablePrimArray
+  , PrimArray (..)
+  , clonePrimArray
+  , copyMutablePrimArray
+  , copyPrimArray
+  , emptyPrimArray
+  , generatePrimArray
+  , indexPrimArray
+  , mapPrimArray
+  , newPrimArray
+  , primArrayFromList
+  , readPrimArray
+  , replicatePrimArray
+  , runPrimArray
+  , setPrimArray
+  , sizeofPrimArray
+  , unsafeFreezePrimArray
+  , writePrimArray
+  )
+import Data.Primitive.Types (Prim)
+import Data.STRef.Strict (newSTRef, readSTRef, writeSTRef)
+import Data.Semigroup (Max (..), Sum (..))
 import Data.Sequence (Seq (..))
 import Paths_octune (getDataFileName)
-import System.IO.Unsafe (unsafeDupablePerformIO)
+import System.IO.Unsafe (unsafePerformIO)
+
+-- Prim adapters
+
+replicateWholePrimArray :: (Prim a) => Int -> PrimArray a -> PrimArray a
+replicateWholePrimArray n sarr = runPrimArray $ do
+  let srcSize = sizeofPrimArray sarr
+      len = n * srcSize
+  darr <- newPrimArray len
+  for_ [0 .. n - 1] $ \i -> do
+    let pos = i * srcSize
+    copyPrimArray darr pos sarr 0 srcSize
+  pure darr
+
+concatPrimArray :: (Prim a) => [PrimArray a] -> PrimArray a
+concatPrimArray = \case
+  [] -> emptyPrimArray
+  [s0] -> s0
+  ss -> runPrimArray $ do
+    let totLen = getSum (foldMap (Sum . sizeofPrimArray) ss)
+    darr <- newPrimArray totLen
+    offRef <- newSTRef 0
+    for_ ss $ \sarr -> do
+      let len = sizeofPrimArray sarr
+      off <- readSTRef offRef
+      copyPrimArray darr off sarr 0 len
+      writeSTRef offRef (off + len)
+    pure darr
+
+mergeIntoPrimArray
+  :: (PrimMonad m, Prim a) => (a -> a -> a) -> MutablePrimArray (PrimState m) a -> Int -> PrimArray a -> Int -> Int -> m ()
+mergeIntoPrimArray f darr doff sarr soff slen =
+  for_ [0 .. slen - 1] $ \pos -> do
+    let dpos = doff + pos
+        spos = soff + pos
+    val0 <- readPrimArray darr dpos
+    let val1 = indexPrimArray sarr spos
+    writePrimArray darr dpos (f val0 val1)
+
+mergeMutableIntoPrimArray
+  :: (PrimMonad m, Prim a)
+  => (a -> a -> a)
+  -> MutablePrimArray (PrimState m) a
+  -> Int
+  -> MutablePrimArray (PrimState m) a
+  -> Int
+  -> Int
+  -> m ()
+mergeMutableIntoPrimArray f darr doff sarr soff slen =
+  for_ [0 .. slen - 1] $ \pos -> do
+    let dpos = doff + pos
+        spos = soff + pos
+    val0 <- readPrimArray darr dpos
+    val1 <- readPrimArray sarr spos
+    writePrimArray darr dpos (f val0 val1)
+
+mergePrimArray :: (Prim a, Num a) => (a -> a -> a) -> [PrimArray a] -> PrimArray a
+mergePrimArray f = \case
+  [] -> emptyPrimArray
+  [s0] -> s0
+  ss -> runPrimArray $ do
+    let totLen = getMax (foldMap (Max . sizeofPrimArray) ss)
+    darr <- newPrimArray totLen
+    setPrimArray darr 0 totLen 0
+    for_ ss $ \sarr -> do
+      let len = sizeofPrimArray sarr
+      mergeIntoPrimArray f darr 0 sarr 0 len
+    pure darr
 
 -- MONO only
 i32ByteToElemCount :: ByteCount -> ElemCount
@@ -48,64 +117,64 @@ i32ByteToElemCount = ElemCount . (4 *) . unByteCount
 i32ElemToByteCount :: ElemCount -> ByteCount
 i32ElemToByteCount = ByteCount . (`div` 4) . unElemCount
 
-newtype InternalSamples = InternalSamples {unInternalSamples :: LiftedPrimArray Int32}
+newtype InternalSamples = InternalSamples {unInternalSamples :: PrimArray Int32}
   deriving stock (Eq, Show)
 
 instance NFData InternalSamples where
-  rnf = rnf . unLiftedPrimArray . unInternalSamples
+  rnf = rnf . unInternalSamples
 
 isampsEmpty :: InternalSamples
-isampsEmpty = InternalSamples emptyLiftedPrimArray
+isampsEmpty = InternalSamples emptyPrimArray
 
 isampsIsNull :: InternalSamples -> Bool
 isampsIsNull = (0 ==) . isampsBytes
 
 isampsLength :: InternalSamples -> ElemCount
-isampsLength = lengthLiftedPrimArray . unInternalSamples
+isampsLength = ElemCount . sizeofPrimArray . unInternalSamples
 
 isampsBytes :: InternalSamples -> ByteCount
-isampsBytes = sizeofLiftedPrimArray . unInternalSamples
+isampsBytes = i32ElemToByteCount . isampsLength
 
 isampsIndex :: InternalSamples -> ElemCount -> Int32
-isampsIndex = indexLiftedPrimArray . unInternalSamples
+isampsIndex s = indexPrimArray (unInternalSamples s) . unElemCount
 
 isampsConstant :: ElemCount -> Int32 -> InternalSamples
-isampsConstant len = InternalSamples . constantLiftedPrimArray len
+isampsConstant len = InternalSamples . replicatePrimArray (unElemCount len)
 
 isampsReplicate :: Int -> InternalSamples -> InternalSamples
-isampsReplicate n = InternalSamples . replicateLiftedPrimArray n . unInternalSamples
+isampsReplicate n = InternalSamples . replicateWholePrimArray n . unInternalSamples
 
 isampsFromList :: [Int32] -> InternalSamples
-isampsFromList = InternalSamples . liftedPrimArrayFromList
+isampsFromList = InternalSamples . primArrayFromList
 
 isampsConcat :: [InternalSamples] -> InternalSamples
-isampsConcat = InternalSamples . concatLiftedPrimArray . fmap unInternalSamples
+isampsConcat = InternalSamples . concatPrimArray . fmap unInternalSamples
 
 isampsMix :: [InternalSamples] -> InternalSamples
-isampsMix = InternalSamples . mergeLiftedPrimArray 0 (+) . fmap unInternalSamples
+isampsMix = InternalSamples . mergePrimArray (+) . fmap unInternalSamples
 
 isampsTrim :: ElemCount -> ElemCount -> InternalSamples -> InternalSamples
-isampsTrim off len s = InternalSamples (cloneLiftedPrimArray (unInternalSamples s) off len)
+isampsTrim off len s = InternalSamples (clonePrimArray (unInternalSamples s) (unElemCount off) (unElemCount len))
 
 isampsMap :: (Int32 -> Int32) -> InternalSamples -> InternalSamples
-isampsMap f = InternalSamples . mapLiftedPrimArray f . unInternalSamples
+isampsMap f = InternalSamples . mapPrimArray f . unInternalSamples
 
 isampsFill :: ElemCount -> ElemCount -> Int32 -> InternalSamples -> InternalSamples
-isampsFill off len val (InternalSamples sarr) = runST $ do
-  let tot = lengthLiftedPrimArray sarr
+isampsFill off len val (InternalSamples sarr) = InternalSamples $ runPrimArray $ do
+  let tot = ElemCount (sizeofPrimArray sarr)
       lim = off + len
       left = tot - lim
-  darr <- uninitLiftedPrimArray len (Proxy @Int32)
-  when (off > 0) (copyLiftedPrimArray darr 0 sarr 0 off)
-  setLiftedPrimArray darr off len val
-  when (left > 0) (copyLiftedPrimArray darr lim sarr lim left)
-  fmap InternalSamples (unsafeFreezeLiftedPrimArray darr)
+  darr <- newPrimArray (unElemCount tot)
+  when (off > 0) (copyPrimArray darr 0 sarr 0 (unElemCount off))
+  setPrimArray darr (unElemCount off) (unElemCount len) val
+  when (left > 0) (copyPrimArray darr (unElemCount lim) sarr (unElemCount lim) (unElemCount left))
+  pure darr
 
 isampsToWave :: InternalSamples -> WAVESamples
-isampsToWave = WAVESamples . QuietLiftedArray . unInternalSamples
+isampsToWave = WAVESamples . QuietLiftedArray . LiftedPrimArray . (\(PrimArray x) -> ByteArray x) . unInternalSamples
 
 isampsFromWave :: WAVESamples -> InternalSamples
-isampsFromWave = InternalSamples . unQuietLiftedArray . unWAVESamples
+isampsFromWave = InternalSamples . (\(ByteArray x) -> PrimArray x) . unLiftedPrimArray . unQuietLiftedArray . unWAVESamples
 
 data SampleStream = SampleStream
   { ssFixed :: !InternalSamples
@@ -121,14 +190,14 @@ streamRun (SampleStream fixed repeated) =
         if
           | pos < 0 -> 0
           | pos < flen ->
-              indexLiftedPrimArray (unInternalSamples fixed) pos
+              indexPrimArray (unInternalSamples fixed) (unElemCount pos)
           | rlen == 0 -> 0
           | otherwise ->
-              indexLiftedPrimArray (unInternalSamples repeated) (mod (pos - flen) rlen)
+              indexPrimArray (unInternalSamples repeated) (unElemCount (mod (pos - flen) rlen))
 
 streamToIsamps :: ElemCount -> ElemCount -> SampleStream -> InternalSamples
 streamToIsamps off len t =
-  InternalSamples (generateLiftedPrimArray len (streamRun t . (off +)))
+  InternalSamples (generatePrimArray (unElemCount len) (streamRun t . (off +) . ElemCount))
 
 assertMono :: WAVEHeader -> IO ()
 assertMono hdr = unless (waveNumChannels hdr == 1) (fail "sample wav must be mono")
@@ -147,7 +216,7 @@ loadSamples :: FilePath -> IO InternalSamples
 loadSamples = getWAVEFile >=> readSamples
 
 loadDataSamples :: String -> InternalSamples
-loadDataSamples name = unsafeDupablePerformIO (getDataFileName ("data/" ++ name ++ ".wav") >>= loadSamples)
+loadDataSamples name = unsafePerformIO (getDataFileName ("data/" ++ name ++ ".wav") >>= loadSamples)
 
 snareSamples :: InternalSamples
 snareSamples = loadDataSamples "snare"
@@ -236,7 +305,7 @@ opAnnoLenF i = \case
   OpEmpty ->
     (0, Op2Empty)
   OpSamp s ->
-    let l' = min i (lengthLiftedPrimArray (unInternalSamples s))
+    let l' = min i (isampsLength s)
     in  (l', Op2Samp s)
   OpBound l r ->
     let l' = min i l
@@ -287,7 +356,7 @@ opAnnoLen i (Op f) = let (ml, f') = opAnnoLenF i f in Op2Anno (Anno ml f')
 
 data OpEnv s = OpEnv
   { oeOff :: !ElemCount
-  , oeBuf :: !(MutableLiftedPrimArray s Int32)
+  , oeBuf :: !(MutablePrimArray s Int32)
   }
   deriving stock (Eq)
 
@@ -303,14 +372,14 @@ type OpM s = ReaderT (OpEnv s) (ExceptT OpErr (ST s))
 liftST :: ST s a -> OpM s a
 liftST = lift . lift
 
-execOpM :: ElemCount -> (forall s. OpM s ()) -> Either OpErr (LiftedPrimArray Int32)
+execOpM :: ElemCount -> (forall s. OpM s ()) -> Either OpErr (PrimArray Int32)
 execOpM len act = runST $ do
-  buf <- newLiftedPrimArray len (Proxy @Int32)
+  buf <- newPrimArray (unElemCount len)
   let env = OpEnv {oeOff = 0, oeBuf = buf}
   ea <- runExceptT (runReaderT act env)
   case ea of
     Left e -> pure (Left e)
-    Right () -> fmap Right (unsafeFreezeLiftedPrimArray buf)
+    Right () -> fmap Right (unsafeFreezePrimArray buf)
 
 opToWave :: Op -> Either OpErr WAVESamples
 opToWave op =
@@ -319,22 +388,20 @@ opToWave op =
     Just len -> do
       let an = opAnnoLen len op
       arr <- execOpM len (goOpToWave an)
-      Right (WAVESamples (QuietLiftedArray arr))
+      Right (isampsToWave (InternalSamples arr))
 
 handleOpSamp :: ElemCount -> InternalSamples -> OpM s ()
 handleOpSamp clen (InternalSamples src) = do
   OpEnv off buf <- ask
-  liftST (copyLiftedPrimArray buf off src 0 clen)
+  liftST (copyPrimArray buf (unElemCount off) src 0 (unElemCount clen))
 
 handleOpReplicate :: ElemCount -> Int -> Op2Anno ElemCount -> OpM s ()
 handleOpReplicate clen n r = do
   OpEnv off buf <- ask
   goOpToWave r
   for_ [1 .. n - 1] $ \i -> do
-    let newOff = off + ElemCount i * clen
-    -- TODO will this segfault?
-    buf' <- unsafeFreezeLiftedPrimArray buf
-    copyLiftedPrimArray buf newOff buf' off clen
+    let off' = off + ElemCount i * clen
+    copyMutablePrimArray buf (unElemCount off') buf (unElemCount off) (unElemCount clen)
 
 handleOpConcat :: ElemCount -> Seq (Op2Anno ElemCount) -> OpM s ()
 handleOpConcat clen rs = do
@@ -347,13 +414,12 @@ handleOpConcat clen rs = do
 handleOpMerge :: ElemCount -> Seq (Op2Anno ElemCount) -> OpM s ()
 handleOpMerge clen rs = do
   OpEnv off buf <- ask
-  tmp <- liftST (uninitLiftedPrimArray clen (Proxy @Int32))
+  tmp <- liftST (newPrimArray (unElemCount clen))
   local (\env -> env {oeOff = 0, oeBuf = tmp}) $ do
     for_ rs $ \r -> do
-      liftST (zeroLiftedPrimArray tmp 0 clen)
+      liftST (setPrimArray tmp 0 (unElemCount clen) 0)
       goOpToWave r
-      tmp' <- liftST (unsafeFreezeLiftedPrimArray tmp)
-      liftST (mergeIntoLiftedPrimArray (+) buf off tmp' 0 clen)
+      liftST (mergeMutableIntoPrimArray (+) buf (unElemCount off) tmp 0 (unElemCount clen))
 
 goOpToWave :: Op2Anno ElemCount -> OpM s ()
 goOpToWave (Op2Anno (Anno clen f)) = case f of

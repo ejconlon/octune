@@ -90,6 +90,7 @@ library
     , monad-par
     , mtl
     , optparse-applicative
+    , primitive
     , proteaaudio
     , text
     , transformers
@@ -144,6 +145,7 @@ executable octune
     , mtl
     , octune
     , optparse-applicative
+    , primitive
     , proteaaudio
     , text
     , transformers
@@ -197,6 +199,7 @@ test-suite octune-test
     , mtl
     , octune
     , optparse-applicative
+    , primitive
     , proteaaudio
     , text
     , transformers

@@ -2,9 +2,7 @@ module Octune.CodeGen.SamplesGen where
 
 import Control.Lens (foldlOf', traversed)
 import Control.Monad (join)
--- import Control.Monad.Par (Par, parMapM, runPar)
-
-import Control.Monad.Identity (Identity (..))
+import Control.Monad.Par (Par, parMapM, runPar)
 import Dahdit.Audio.Wav.Simple (WAVESamples (..))
 import Dahdit.Sizes (ElemCount (..))
 import Data.Bits (Bits (shiftL))
@@ -41,14 +39,6 @@ import Octune.Types.Note
   , Percussion (..)
   , Sound (..)
   )
-
-type Par = Identity
-
-runPar :: Par a -> a
-runPar = runIdentity
-
-parMapM :: (a -> Par b) -> [a] -> Par [b]
-parMapM = traverse
 
 -- Default amplitude of a wave
 amplitude :: Int32

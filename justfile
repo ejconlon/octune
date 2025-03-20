@@ -76,21 +76,21 @@ sample-gen-heap-dir target: clean-profile
   stack exec hp2pretty -- --key octune.hp.txt octune.hp
   rm -f C*.svg
 
-# event_args := "-hc -l -pa --eventlog-flush-interval=0.1"
-event_args := "-hc -l -pa"
+# event_args := "-hc -l -pa -xc --eventlog-flush-interval=0.1"
+event_args := "-hc -l -pa -xc"
 
 # Profile by event log
 sample-gen-event-dir target: clean-profile
   mkdir -p out
-  stack build --profile
-  stack exec --profile octune -- +RTS {{event_args}} -RTS -o out/{{target}} samples/{{target}}/*.otn || true
+  stack build --trace --profile
+  stack exec --trace --profile octune -- +RTS {{event_args}} -RTS -o out/{{target}} samples/{{target}}/*.otn || true
   stack exec eventlog2html -- octune.eventlog
 
 # Profile by event log
 sample-gen-event target: clean-profile
   mkdir -p out
-  stack build --profile
-  stack exec --profile octune -- +RTS {{event_args}} -RTS -o out/{{target}} samples/{{target}}.otn
+  stack build --trace --profile
+  stack exec --trace --profile octune -- +RTS {{event_args}} -RTS -o out/{{target}} samples/{{target}}.otn
   stack exec eventlog2html -- octune.eventlog
 
 clean-profile:

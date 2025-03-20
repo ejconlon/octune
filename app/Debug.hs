@@ -11,6 +11,6 @@ cfgSil =
     False
     1
     ( fmap
-        (\x -> "samples/" ++ x ++ ".otn")
+        (\x -> "samples/silhouette/" ++ x ++ ".otn")
         ["Bridge", "Chorus", "Common", "Intro", "Outro", "Prechorus", "Silhouette", "Verse"]
     )
