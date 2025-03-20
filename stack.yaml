@@ -11,7 +11,7 @@ extra-deps:
 - aeson-via-0.2.3
 - data-sword-0.2.0.3
 - git: git@github.com:ejconlon/dahdit.git
-  commit: abb886472c79ecca6533a582ce3bae1911458a14
+  commit: 3247b0fd095da48145b148917d376e9763373d94
   subdirs:
   - dahdit
   - dahdit-audio

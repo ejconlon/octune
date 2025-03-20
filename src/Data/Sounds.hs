@@ -2,7 +2,7 @@ module Data.Sounds where
 
 import Control.DeepSeq (NFData (..))
 import Control.Exception (Exception)
-import Control.Monad (unless, (>=>))
+import Control.Monad (unless, when, (>=>))
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Reader (Reader, ReaderT (..), ask, asks, local, runReader)
 import Control.Monad.ST.Strict (ST, runST)
@@ -14,6 +14,7 @@ import Dahdit.LiftedPrimArray
   , MutableLiftedPrimArray (..)
   , cloneLiftedPrimArray
   , concatLiftedPrimArray
+  , constantLiftedPrimArray
   , copyLiftedPrimArray
   , emptyLiftedPrimArray
   , generateLiftedPrimArray
@@ -29,7 +30,6 @@ import Dahdit.LiftedPrimArray
   , sizeofLiftedPrimArray
   , uninitLiftedPrimArray
   , unsafeFreezeLiftedPrimArray
-  , unsafeThawLiftedPrimArray
   , zeroLiftedPrimArray
   )
 import Dahdit.Sizes (ByteCount (..), ElemCount (..))
@@ -69,8 +69,11 @@ isampsBytes = sizeofLiftedPrimArray . unInternalSamples
 isampsIndex :: InternalSamples -> ElemCount -> Int32
 isampsIndex = indexLiftedPrimArray . unInternalSamples
 
-isampsReplicate :: ElemCount -> Int32 -> InternalSamples
-isampsReplicate len = InternalSamples . replicateLiftedPrimArray len
+isampsConstant :: ElemCount -> Int32 -> InternalSamples
+isampsConstant len = InternalSamples . constantLiftedPrimArray len
+
+isampsReplicate :: Int -> InternalSamples -> InternalSamples
+isampsReplicate n = InternalSamples . replicateLiftedPrimArray n . unInternalSamples
 
 isampsFromList :: [Int32] -> InternalSamples
 isampsFromList = InternalSamples . liftedPrimArrayFromList
@@ -89,10 +92,14 @@ isampsMap f = InternalSamples . mapLiftedPrimArray f . unInternalSamples
 
 isampsFill :: ElemCount -> ElemCount -> Int32 -> InternalSamples -> InternalSamples
 isampsFill off len val (InternalSamples sarr) = runST $ do
-  let darr = cloneLiftedPrimArray sarr 0 len
-  darr' <- unsafeThawLiftedPrimArray darr
-  setLiftedPrimArray darr' off len val
-  pure (InternalSamples darr)
+  let tot = lengthLiftedPrimArray sarr
+      lim = off + len
+      left = tot - lim
+  darr <- uninitLiftedPrimArray len (Proxy @Int32)
+  when (off > 0) (copyLiftedPrimArray darr 0 sarr 0 off)
+  setLiftedPrimArray darr off len val
+  when (left > 0) (copyLiftedPrimArray darr lim sarr lim left)
+  fmap InternalSamples (unsafeFreezeLiftedPrimArray darr)
 
 isampsToWave :: InternalSamples -> WAVESamples
 isampsToWave = WAVESamples . QuietLiftedArray . unInternalSamples
@@ -325,6 +332,7 @@ handleOpReplicate clen n r = do
   goOpToWave r
   for_ [1 .. n - 1] $ \i -> do
     let newOff = off + ElemCount i * clen
+    -- TODO will this segfault?
     buf' <- unsafeFreezeLiftedPrimArray buf
     copyLiftedPrimArray buf newOff buf' off clen
 

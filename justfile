@@ -61,3 +61,9 @@ sample-gen-prof target:
   stack build --profile
   stack exec --profile octune -- +RTS -p -RTS -o out/{{target}} samples/{{target}}.otn
   stack exec profiteur -- octune.prof
+
+# Profile wav gen for a single file
+sample-gen-dbg-dir target:
+  mkdir -p out
+  stack build --profile
+  stack exec --profile octune -- +RTS -xc -RTS -o out/{{target}} samples/{{target}}/*.otn

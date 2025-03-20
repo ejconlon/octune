@@ -13,7 +13,8 @@ import Sound.ProteaAudio qualified as P
 play :: InternalSamples -> IO ()
 play samps = do
   let sr = 48000
-      micros = div (1000000 * unElemCount (isampsLength samps)) sr
+      factor = 1000000
+      micros = div (factor * unElemCount (isampsLength samps)) sr + div factor 8
   simpleWav <- dumpSamples samps
   complexWav <- rethrow (DAWS.toComplex simpleWav)
   strWav <- encode complexWav

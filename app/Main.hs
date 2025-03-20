@@ -16,20 +16,15 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import Octune.Annotate (annotateBeatLengths)
-import Octune.CodeGen (genWAVE)
+import Octune.CodeGen.WAVEGen (genWAVE)
 import Octune.NameResolution (resolveModuleVariables)
-import Octune.Parser (pFile)
-import Octune.StaticAnalysis
-  ( checkBeatsAssertions
-  , checkVarUsage
-  )
-import Octune.Types
-  ( AST (..)
-  , Ann
-  , Env
-  , buildASTEnv
-  , coreEnv
-  )
+import Octune.Parser.AST (pFile)
+import Octune.StaticAnalysis.BarBeats (checkBeatsAssertions)
+import Octune.StaticAnalysis.VarUsage (checkVarUsage)
+import Octune.Types.AST (AST (..))
+import Octune.Types.Ann (Ann)
+import Octune.Types.Core (coreEnv)
+import Octune.Types.Env (Env, buildASTEnv)
 import Options.Applicative
   ( execParser
   , fullDesc

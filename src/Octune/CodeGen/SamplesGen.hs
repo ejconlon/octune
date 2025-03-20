@@ -2,7 +2,9 @@ module Octune.CodeGen.SamplesGen where
 
 import Control.Lens (foldlOf', traversed)
 import Control.Monad (join)
-import Control.Monad.Par (Par, parMapM, runPar)
+-- import Control.Monad.Par (Par, parMapM, runPar)
+
+import Control.Monad.Identity (Identity (..))
 import Dahdit.Audio.Wav.Simple (WAVESamples (..))
 import Dahdit.Sizes (ElemCount (..))
 import Data.Bits (Bits (shiftL))
@@ -14,6 +16,7 @@ import Data.Sounds
   , SampleStream (..)
   , clapSamples
   , isampsConcat
+  , isampsConstant
   , isampsEmpty
   , isampsFill
   , isampsFromList
@@ -38,6 +41,14 @@ import Octune.Types.Note
   , Percussion (..)
   , Sound (..)
   )
+
+type Par = Identity
+
+runPar :: Par a -> a
+runPar = runIdentity
+
+parMapM :: (a -> Par b) -> [a] -> Par [b]
+parMapM = traverse
 
 -- Default amplitude of a wave
 amplitude :: Int32
@@ -74,7 +85,7 @@ mergeSamples = isampsMix
 -- Sequence a list of samples,
 --   then repeat it a given number of times
 repeatSamples :: Int -> [InternalSamples] -> InternalSamples
-repeatSamples n = sequenceSamples . replicate n . sequenceSamples
+repeatSamples n = isampsReplicate n . sequenceSamples
 
 modifySamplesVolume :: Rational -> InternalSamples -> InternalSamples
 modifySamplesVolume multiplier = isampsMap (multRat multiplier)
@@ -211,10 +222,10 @@ soundWave frameRate (Pitch letter accidental octave) mWaveform =
   SampleStream isampsEmpty $ case waveformOrDefault mWaveform of
     Square ->
       isampsConcat
-        [ isampsReplicate (ElemCount firstHalf) (-amplitude)
-        , isampsReplicate (ElemCount firstHalf) amplitude
-        , isampsReplicate (ElemCount secondHalf) (-amplitude)
-        , isampsReplicate (ElemCount secondHalf) amplitude
+        [ isampsConstant (ElemCount firstHalf) (-amplitude)
+        , isampsConstant (ElemCount firstHalf) amplitude
+        , isampsConstant (ElemCount secondHalf) (-amplitude)
+        , isampsConstant (ElemCount secondHalf) amplitude
         ]
      where
       (firstHalf, secondHalf) = splitHalf wavelenFrames

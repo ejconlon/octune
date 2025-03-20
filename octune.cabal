@@ -31,20 +31,16 @@ library
       Data.Combinator
       Data.Sounds
       Octune.Annotate
-      Octune.CodeGen
       Octune.CodeGen.OpGen
       Octune.CodeGen.SamplesGen
       Octune.CodeGen.WAVEGen
       Octune.NameResolution
-      Octune.Parser
       Octune.Parser.AST
       Octune.Parser.Lexeme
       Octune.Parser.Note
       Octune.Player
-      Octune.StaticAnalysis
       Octune.StaticAnalysis.BarBeats
       Octune.StaticAnalysis.VarUsage
-      Octune.Types
       Octune.Types.Ann
       Octune.Types.AST
       Octune.Types.Core
