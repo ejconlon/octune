@@ -1,16 +1,18 @@
-module Octune.CodeGen.NewSamplesGen where
+module Octune.CodeGen.OpGen where
 
 import Control.Lens (foldlOf', traversed)
 import Control.Monad (join, (>=>))
-import Control.Monad.Par (parMapM)
-import Control.Monad.Reader (asks, local)
+import Control.Monad.Par (Par, parMapM, runPar)
+import Control.Monad.Par.Class (ParFuture (..))
+import Control.Monad.Par.IO (IVar)
+import Control.Monad.Par.Scheds.TraceInternal qualified as IVar
+import Control.Monad.Reader (MonadReader, ReaderT (..), asks, local)
 import Dahdit (ElemCount (..))
 import Dahdit.Audio.Wav.Simple (WAVESamples)
 import Data.Bits (shiftL)
 import Data.Int (Int32)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
-import Data.PrimPar (ReadPar, runReadPar)
 import Data.Sounds
   ( InternalSamples
   , SampleStream (..)
@@ -42,7 +44,6 @@ import Octune.Types.Note
   , Percussion (..)
   , Sound (..)
   )
-import System.IO.Unsafe (unsafePerformIO)
 
 -- Default amplitude of a wave
 amplitude :: Int32
@@ -76,10 +77,15 @@ data GenEnv = GenEnv
   }
   deriving stock (Eq, Show)
 
-type GenM = ReadPar GenEnv
+newtype GenM a = GenM {unGenM :: ReaderT GenEnv Par a}
+  deriving newtype (Functor, Applicative, Monad, MonadReader GenEnv)
 
-runGenM :: GenM a -> GenEnv -> IO a
-runGenM = runReadPar
+instance ParFuture IVar GenM where
+  spawn_ act = GenM (ReaderT (runGenM act >=> IVar.newFull_))
+  get iv = GenM (ReaderT (const (IVar.get iv)))
+
+runGenM :: GenM a -> GenEnv -> Par a
+runGenM = runReaderT . unGenM
 
 modifySamplesVolume :: Rational -> InternalSamples -> InternalSamples
 modifySamplesVolume multiplier = isampsMap (multRat multiplier)
@@ -100,7 +106,7 @@ waveformOrDefault :: Maybe Waveform -> Waveform
 waveformOrDefault = fromMaybe Square
 
 genSamples :: Env Core -> Int -> Int -> Bool -> Core -> WAVESamples
-genSamples env bpm frameRate _memoize = isampsToWave . unsafePerformIO . flip runGenM (GenEnv env bpm frameRate Nothing) . genCore
+genSamples env bpm frameRate _memoize = isampsToWave . runPar . flip runGenM (GenEnv env bpm frameRate Nothing) . genCore
 
 genCore :: Core -> GenM InternalSamples
 genCore = \case

@@ -3,17 +3,15 @@ module Data.Sounds where
 import Control.DeepSeq (NFData (..))
 import Control.Exception (Exception)
 import Control.Monad (unless, when, (>=>))
-import Control.Monad.Except (ExceptT, runExceptT)
-import Control.Monad.Primitive (PrimMonad (..))
-import Control.Monad.Reader (Reader, ReaderT (..), ask, asks, local, runReader)
-import Control.Monad.ST.Strict (ST, runST)
-import Control.Monad.Trans (lift)
+import Control.Monad.Primitive (PrimMonad (..), RealWorld)
+import Control.Monad.Reader (Reader, ask, asks, local, runReader)
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
 import Dahdit.LiftedPrimArray (LiftedPrimArray (..))
 import Dahdit.Sizes (ByteCount (..), ElemCount (..))
 import Data.Foldable (for_, toList)
 import Data.Int (Int32)
+import Data.PrimPar (ReadPar, runReadPar)
 import Data.Primitive.ByteArray (ByteArray (..))
 import Data.Primitive.PrimArray
   ( MutablePrimArray
@@ -354,9 +352,9 @@ opAnnoLenF i = \case
 opAnnoLen :: ElemCount -> Op -> Op2Anno ElemCount
 opAnnoLen i (Op f) = let (ml, f') = opAnnoLenF i f in Op2Anno (Anno ml f')
 
-data OpEnv s = OpEnv
+data OpEnv = OpEnv
   { oeOff :: !ElemCount
-  , oeBuf :: !(MutablePrimArray s Int32)
+  , oeBuf :: !(MutablePrimArray RealWorld Int32)
   }
   deriving stock (Eq)
 
@@ -367,35 +365,33 @@ data OpErr
 
 instance Exception OpErr
 
-type OpM s = ReaderT (OpEnv s) (ExceptT OpErr (ST s))
+type OpM = ReadPar OpEnv
 
-liftST :: ST s a -> OpM s a
-liftST = lift . lift
+runOpM :: OpM a -> OpEnv -> IO a
+runOpM = runReadPar
 
-execOpM :: ElemCount -> (forall s. OpM s ()) -> Either OpErr (PrimArray Int32)
-execOpM len act = runST $ do
+execOpM :: ElemCount -> OpM () -> IO (PrimArray Int32)
+execOpM len act = do
   buf <- newPrimArray (unElemCount len)
   let env = OpEnv {oeOff = 0, oeBuf = buf}
-  ea <- runExceptT (runReaderT act env)
-  case ea of
-    Left e -> pure (Left e)
-    Right () -> fmap Right (unsafeFreezePrimArray buf)
+  runOpM act env
+  unsafeFreezePrimArray buf
 
-opToWave :: Op -> Either OpErr WAVESamples
+opToWave :: Op -> IO (Either OpErr WAVESamples)
 opToWave op =
   case opInferLen op of
-    Nothing -> Left OpErrInfer
+    Nothing -> pure (Left OpErrInfer)
     Just len -> do
       let an = opAnnoLen len op
       arr <- execOpM len (goOpToWave an)
-      Right (isampsToWave (InternalSamples arr))
+      pure (Right (isampsToWave (InternalSamples arr)))
 
-handleOpSamp :: ElemCount -> InternalSamples -> OpM s ()
+handleOpSamp :: ElemCount -> InternalSamples -> OpM ()
 handleOpSamp clen (InternalSamples src) = do
   OpEnv off buf <- ask
-  liftST (copyPrimArray buf (unElemCount off) src 0 (unElemCount clen))
+  copyPrimArray buf (unElemCount off) src 0 (unElemCount clen)
 
-handleOpReplicate :: ElemCount -> Int -> Op2Anno ElemCount -> OpM s ()
+handleOpReplicate :: ElemCount -> Int -> Op2Anno ElemCount -> OpM ()
 handleOpReplicate clen n r = do
   OpEnv off buf <- ask
   goOpToWave r
@@ -403,7 +399,7 @@ handleOpReplicate clen n r = do
     let off' = off + ElemCount i * clen
     copyMutablePrimArray buf (unElemCount off') buf (unElemCount off) (unElemCount clen)
 
-handleOpConcat :: ElemCount -> Seq (Op2Anno ElemCount) -> OpM s ()
+handleOpConcat :: ElemCount -> Seq (Op2Anno ElemCount) -> OpM ()
 handleOpConcat clen rs = do
   off <- asks oeOff
   for_ (zip [0 ..] (toList rs)) $ \(i, r) -> do
@@ -411,17 +407,17 @@ handleOpConcat clen rs = do
     local (\env -> env {oeOff = off'}) $ do
       goOpToWave r
 
-handleOpMerge :: ElemCount -> Seq (Op2Anno ElemCount) -> OpM s ()
+handleOpMerge :: ElemCount -> Seq (Op2Anno ElemCount) -> OpM ()
 handleOpMerge clen rs = do
   OpEnv off buf <- ask
-  tmp <- liftST (newPrimArray (unElemCount clen))
+  tmp <- newPrimArray (unElemCount clen)
   local (\env -> env {oeOff = 0, oeBuf = tmp}) $ do
     for_ rs $ \r -> do
-      liftST (setPrimArray tmp 0 (unElemCount clen) 0)
+      setPrimArray tmp 0 (unElemCount clen) 0
       goOpToWave r
-      liftST (mergeMutableIntoPrimArray (+) buf (unElemCount off) tmp 0 (unElemCount clen))
+      mergeMutableIntoPrimArray (+) buf (unElemCount off) tmp 0 (unElemCount clen)
 
-goOpToWave :: Op2Anno ElemCount -> OpM s ()
+goOpToWave :: Op2Anno ElemCount -> OpM ()
 goOpToWave (Op2Anno (Anno clen f)) = case f of
   Op2Empty -> pure ()
   Op2Samp s -> handleOpSamp clen s
