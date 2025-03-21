@@ -192,10 +192,8 @@ soundWave = \case
     let samps = case wf of
           Square ->
             isampsConcat
-              [ isampsConstant (ElemCount q1) (-amplitude)
-              , isampsConstant (ElemCount q2) amplitude
-              , isampsConstant (ElemCount q3) (-amplitude)
-              , isampsConstant (ElemCount q4) amplitude
+              [ isampsConstant (ElemCount h1) amplitude
+              , isampsConstant (ElemCount h2) (-amplitude)
               ]
           Sawtooth -> do
             -- Note: `2*amplitude` max amplitude to reach the same energy
