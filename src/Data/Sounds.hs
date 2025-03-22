@@ -4,7 +4,7 @@ import Control.DeepSeq (NFData (..))
 import Control.Exception (Exception)
 import Control.Monad (unless, when, (>=>))
 import Control.Monad.Primitive (PrimMonad (..), RealWorld)
-import Control.Monad.Reader (Reader, ask, asks, local, runReader)
+import Control.Monad.Reader (Reader, ask, asks, local, runReader, ReaderT (..))
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
 import Dahdit.LiftedPrimArray (LiftedPrimArray (..))
@@ -40,9 +40,11 @@ import Data.Sequence (Seq (..))
 import Paths_octune (getDataFileName)
 import System.IO.Unsafe (unsafePerformIO)
 import Data.Map.Strict (Map)
-import Data.Topo (TopoErr, topoEvalEager)
+import Data.Topo (TopoErr, topoEval)
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Control.Monad.State.Strict (execStateT, State, runState)
+import qualified Data.Map.Strict as Map
 
 -- Prim adapters
 
@@ -290,9 +292,14 @@ opInferLen :: (n -> Maybe ElemCount) -> Op n -> Maybe ElemCount
 opInferLen = cataOp . opInferLenF
 
 opInferLenTopo :: (Ord n) => Map n (Op n) -> Either (TopoErr n) (Map n (Maybe ElemCount))
-opInferLenTopo m = topoEvalEager opRefs m opInferLen
+opInferLenTopo m = topoEval opRefs m opInferLen
 
-data Anno k v = Anno {annoKey :: k, annoVal :: v}
+-- opPropLen :: Map n (Op n) -> Map n (Maybe ElemCount) -> Maybe (Map n ElemCount)
+-- opPropLen ops infers = execStateT go Map.empty  where
+--   go = for_ (Map.toList ops) $ \(n, Op f) -> case f of
+--     _ -> pure ()
+
+data Anno o v = Anno {annoKey :: o, annoVal :: v}
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 data Op2F n r
@@ -304,75 +311,82 @@ data Op2F n r
   | Op2Ref !n
   deriving stock (Eq, Show, Functor)
 
-newtype Op2Anno n k = Op2Anno {unOp2Anno :: Anno k (Op2F n (Op2Anno n k))}
+newtype Op2Anno o n = Op2Anno {unOp2Anno :: Anno o (Op2F n (Op2Anno o n))}
   deriving stock (Eq, Show)
 
-cataOp2Anno :: (Op2F n r -> Reader k r) -> Op2Anno n k -> r
+cataOp2Anno :: (Op2F n r -> Reader o r) -> Op2Anno o n -> r
 cataOp2Anno f = go
  where
   go (Op2Anno (Anno k v)) = runReader (f (fmap go v)) k
+
+type LenM n = ReaderT (Map n (Maybe ElemCount)) (State (Map n (Max ElemCount)))
+
+runLenM :: LenM n a -> Map n (Maybe ElemCount) -> Map n (Max ElemCount) -> (a, Map n (Max ElemCount))
+runLenM m = runState . runReaderT m
 
 -- Given available length and original definition,
 -- Returns (calculated length, annotated translation).
 -- Properties:
 -- 1. If it's possible to infer a length, it will be GTE the calculated length.
 -- 2. The calculated length will be LTE available length.
-opAnnoLenF :: (n -> ElemCount) -> ElemCount -> OpF n (Op n) -> (ElemCount, Op2F n (Op2Anno n ElemCount))
-opAnnoLenF onRef = go
+opAnnoLenF :: ElemCount -> OpF n (Op n) -> LenM n (Op2Anno ElemCount n)
+opAnnoLenF = go
  where
   go i = \case
-    OpEmpty ->
-      (0, Op2Empty)
-    OpSamp s ->
-      let l' = min i (isampsLength s)
-      in  (l', Op2Samp s)
-    OpBound l r ->
-      let l' = min i l
-          (ml, f) = go l' (unOp r)
-          q' = Op2Anno (Anno ml f)
-      in  (l', if ml == l' then f else Op2Concat (q' :<| Empty))
-    OpCut x r ->
-      let l' = min i (floor (x * fromIntegral i))
-          (ml, f) = go l' (unOp r)
-          q' = Op2Anno (Anno ml f)
-      in  (ml, if ml == l' then f else Op2Concat (q' :<| Empty))
-    OpRepeat r ->
-      let (ml, f) = go i (unOp r)
-          (n, m) = divMod i ml
-          r' = Op2Replicate (unElemCount n) (Op2Anno (Anno ml f))
-      in  if m == 0
-            then
-              (i, r')
-            else
-              let q' = Op2Anno (Anno (ml * n) r')
-                  (ml', f') = go m (unOp r)
-                  q'' = Op2Anno (Anno ml' f')
-              in  (ml * n + ml', Op2Concat (q' :<| q'' :<| Empty))
-    OpReplicate n r ->
-      let l' = div i (ElemCount n)
-          (ml, f) = go l' (unOp r)
-      in  (ml * ElemCount n, Op2Replicate n (Op2Anno (Anno ml f)))
-    OpConcat rs ->
+    OpEmpty -> do
+      pure (Op2Anno (Anno 0 Op2Empty))
+    OpSamp s -> do
+      let l = min i (isampsLength s)
+      pure (Op2Anno (Anno l (Op2Samp s)))
+    OpBound b r -> do
+      let l = min i b
+      r'@(Op2Anno (Anno ml f)) <- go l (unOp r)
+      pure (Op2Anno (Anno l (if ml == l then f else Op2Concat (r' :<| Empty))))
+    OpCut x r -> do
+      let l = min i (floor (x * fromIntegral i))
+      r'@(Op2Anno (Anno ml f)) <- go l (unOp r)
+      pure (Op2Anno (Anno ml (if ml == l then f else Op2Concat (r' :<| Empty))))
+    OpRepeat r -> do
+      r'@(Op2Anno (Anno ml _)) <- go i (unOp r)
+      let (n, m) = divMod i ml
+          f' = Op2Replicate (unElemCount n) r'
+      if m == 0
+        then pure (Op2Anno (Anno i f'))
+        else do
+          let q = Op2Anno (Anno (ml * n) f')
+          q'@(Op2Anno (Anno ml' _)) <- go m (unOp r)
+          pure (Op2Anno (Anno (ml * n + ml') (Op2Concat (q :<| q' :<| Empty))))
+    OpReplicate n r -> do
+      let l = div i (ElemCount n)
+      r'@(Op2Anno (Anno ml _)) <- go l (unOp r)
+      pure (Op2Anno (Anno (ml * ElemCount n) (Op2Replicate n r')))
+    OpConcat rs -> do
       let g !tot !qs = \case
-            Empty -> (tot, Op2Concat qs)
-            p :<| ps ->
+            Empty -> pure (Op2Anno (Anno tot (Op2Concat qs)))
+            p :<| ps -> do
               let left = i - tot
-              in  if left > 0
-                    then
-                      let (ml, f) = go left (unOp p)
-                          tot' = tot + ml
-                          qs' = qs :|> Op2Anno (Anno ml f)
-                      in  g tot' qs' ps
-                    else (tot, Op2Concat qs)
-      in  g 0 Empty rs
-    OpMerge rs ->
-      let ps = fmap (go i . unOp) rs
-          ml = maximum (fmap fst (toList ps))
-      in  (ml, Op2Merge (fmap (\(ml', f') -> Op2Anno (Anno ml' f')) ps))
-    OpRef n -> (onRef n, Op2Ref n)
+              if left > 0
+                then do
+                  q@(Op2Anno (Anno ml _)) <- go left (unOp p)
+                  g (tot + ml) (qs :|> q) ps
+                else pure (Op2Anno (Anno tot (Op2Concat qs)))
+      g 0 Empty rs
+    OpMerge rs -> do
+      ps <- traverse (go i . unOp) rs
+      let ml = maximum (fmap (annoKey . unOp2Anno) (toList ps))
+      pure (Op2Anno (Anno ml (Op2Merge ps)))
+    -- TODO if inference present in reader map, use that
+    -- otherwise add current len (i) to the state map
+    -- OpRef n ->
+    --   let l = min i (onRef n)
+    --   in Op2Anno (Anno l (Op2Ref n))
+    _ -> error "TODO"
 
-opAnnoLen :: (n -> ElemCount) -> ElemCount -> Op n -> Op2Anno n ElemCount
-opAnnoLen onRef i (Op f) = let (ml, f') = opAnnoLenF onRef i f in Op2Anno (Anno ml f')
+-- TODO operate on Map and to through in reverse topo order (top down)
+-- if it has an inferred len, call anno len. at the end merge maps
+-- and assert you have lens for all. then anno len for the ones originally skipped
+-- opAnnoLen :: (n -> ElemCount) -> ElemCount -> Op n -> Op2Anno ElemCount n
+-- opAnnoLen onRef i (Op f) = opAnnoLenF onRef i f
 
 data OpEnv = OpEnv
   { oeOff :: !ElemCount
@@ -413,7 +427,7 @@ handleOpSamp clen (InternalSamples src) = do
   OpEnv off buf <- ask
   copyPrimArray buf (unElemCount off) src 0 (unElemCount clen)
 
-handleOpReplicate :: ElemCount -> Int -> Op2Anno n ElemCount -> OpM ()
+handleOpReplicate :: ElemCount -> Int -> Op2Anno ElemCount n -> OpM ()
 handleOpReplicate clen n r = do
   OpEnv off buf <- ask
   goOpToWave r
@@ -421,7 +435,7 @@ handleOpReplicate clen n r = do
     let off' = off + ElemCount i * clen
     copyMutablePrimArray buf (unElemCount off') buf (unElemCount off) (unElemCount clen)
 
-handleOpConcat :: ElemCount -> Seq (Op2Anno n ElemCount) -> OpM ()
+handleOpConcat :: ElemCount -> Seq (Op2Anno ElemCount n) -> OpM ()
 handleOpConcat clen rs = do
   off <- asks oeOff
   for_ (zip [0 ..] (toList rs)) $ \(i, r) -> do
@@ -429,7 +443,7 @@ handleOpConcat clen rs = do
     local (\env -> env {oeOff = off'}) $ do
       goOpToWave r
 
-handleOpMerge :: ElemCount -> Seq (Op2Anno n ElemCount) -> OpM ()
+handleOpMerge :: ElemCount -> Seq (Op2Anno ElemCount n) -> OpM ()
 handleOpMerge clen rs = do
   OpEnv off buf <- ask
   tmp <- newPrimArray (unElemCount clen)
@@ -439,11 +453,11 @@ handleOpMerge clen rs = do
       goOpToWave r
       mergeMutableIntoPrimArray (+) buf (unElemCount off) tmp 0 (unElemCount clen)
 
-goOpToWave :: Op2Anno n ElemCount -> OpM ()
+goOpToWave :: Op2Anno ElemCount n -> OpM ()
 goOpToWave (Op2Anno (Anno clen f)) = case f of
   Op2Empty -> pure ()
   Op2Samp s -> handleOpSamp clen s
   Op2Replicate n r -> handleOpReplicate clen n r
   Op2Concat rs -> handleOpConcat clen rs
   Op2Merge rs -> handleOpMerge clen rs
-  Op2Ref n -> error "TODO"
+  Op2Ref _n -> error "TODO"
