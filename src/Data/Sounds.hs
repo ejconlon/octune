@@ -2,15 +2,18 @@ module Data.Sounds where
 
 import Control.DeepSeq (NFData (..))
 import Control.Exception (Exception)
-import Control.Monad (unless, when, (>=>))
+import Control.Monad (join, unless, when, (>=>))
 import Control.Monad.Primitive (PrimMonad (..), RealWorld)
-import Control.Monad.Reader (Reader, ask, asks, local, runReader, ReaderT (..))
+import Control.Monad.Reader (Reader, ReaderT (..), ask, asks, local, runReader)
+import Control.Monad.State.Strict (State, modify', runState)
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
 import Dahdit.LiftedPrimArray (LiftedPrimArray (..))
 import Dahdit.Sizes (ByteCount (..), ElemCount (..))
-import Data.Foldable (for_, toList, fold)
+import Data.Foldable (fold, for_, toList)
 import Data.Int (Int32)
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.PrimPar (ReadPar, runReadPar)
 import Data.Primitive.ByteArray (ByteArray (..))
 import Data.Primitive.PrimArray
@@ -37,14 +40,11 @@ import Data.Primitive.Types (Prim)
 import Data.STRef.Strict (newSTRef, readSTRef, writeSTRef)
 import Data.Semigroup (Max (..), Sum (..))
 import Data.Sequence (Seq (..))
+import Data.Set (Set)
+import Data.Set qualified as Set
+import Data.Topo (TopoErr, topoEval)
 import Paths_octune (getDataFileName)
 import System.IO.Unsafe (unsafePerformIO)
-import Data.Map.Strict (Map)
-import Data.Topo (TopoErr, topoEval)
-import Data.Set (Set)
-import qualified Data.Set as Set
-import Control.Monad.State.Strict (execStateT, State, runState)
-import qualified Data.Map.Strict as Map
 
 -- Prim adapters
 
@@ -268,7 +268,7 @@ cataOp f = go
   go = f . fmap go . unOp
 
 opRefs :: (Ord n) => Op n -> Set n
-opRefs= cataOp $ \case
+opRefs = cataOp $ \case
   OpRef n -> Set.singleton n
   op -> fold op
 
@@ -283,9 +283,9 @@ opInferLenF onRef = \case
   OpConcat rs -> fmap sum (sequence rs)
   OpMerge rs ->
     let qs = rs >>= maybe Empty (:<| Empty)
-    in case qs of
-      Empty -> Nothing
-      _ -> Just (maximum qs)
+    in  case qs of
+          Empty -> Nothing
+          _ -> Just (maximum qs)
   OpRef n -> onRef n
 
 opInferLen :: (n -> Maybe ElemCount) -> Op n -> Maybe ElemCount
@@ -329,7 +329,7 @@ runLenM m = runState . runReaderT m
 -- Properties:
 -- 1. If it's possible to infer a length, it will be GTE the calculated length.
 -- 2. The calculated length will be LTE available length.
-opAnnoLenF :: ElemCount -> OpF n (Op n) -> LenM n (Op2Anno ElemCount n)
+opAnnoLenF :: (Ord n) => ElemCount -> OpF n (Op n) -> LenM n (Op2Anno ElemCount n)
 opAnnoLenF = go
  where
   go i = \case
@@ -375,12 +375,12 @@ opAnnoLenF = go
       ps <- traverse (go i . unOp) rs
       let ml = maximum (fmap (annoKey . unOp2Anno) (toList ps))
       pure (Op2Anno (Anno ml (Op2Merge ps)))
-    -- TODO if inference present in reader map, use that
-    -- otherwise add current len (i) to the state map
-    -- OpRef n ->
-    --   let l = min i (onRef n)
-    --   in Op2Anno (Anno l (Op2Ref n))
-    _ -> error "TODO"
+    OpRef n -> do
+      mx <- asks (join . Map.lookup n)
+      l <- case mx of
+        Just x -> pure (min i x)
+        Nothing -> i <$ modify' (Map.alter (Just . maybe (Max i) (<> Max i)) n)
+      pure (Op2Anno (Anno l (Op2Ref n)))
 
 -- TODO operate on Map and to through in reverse topo order (top down)
 -- if it has an inferred len, call anno len. at the end merge maps

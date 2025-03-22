@@ -2,18 +2,19 @@ module Data.Topo
   ( TopoErr (..)
   , topoSort
   , topoEval
-  ) where
+  )
+where
 
 import Control.Exception (Exception)
-import Control.Monad.State.Strict (execState, modify', gets, StateT (..))
+import Control.Monad.Except (Except, runExcept, throwError)
+import Control.Monad.State.Strict (StateT (..), execState, gets, modify')
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Sequence (Seq (..))
+import Data.Sequence qualified as Seq
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Typeable (Typeable)
-import Control.Monad.Except (runExcept, throwError, Except)
-import qualified Data.Sequence as Seq
 
 data TopoErr k
   = TopoErrLoop !k
@@ -40,7 +41,8 @@ runSortM :: SortM k a -> SortSt k -> Either (TopoErr k) (a, SortSt k)
 runSortM m = runExcept . runStateT m
 
 topoSortNext :: (Ord k) => (k -> Maybe (Set k)) -> SortM k (Maybe k)
-topoSortNext findRefs = goNext where
+topoSortNext findRefs = goNext
+ where
   goNext = do
     work <- gets ssWork
     case work of
@@ -50,7 +52,7 @@ topoSortNext findRefs = goNext where
           Empty -> pure Nothing
           _ -> goUndefer
       k :<| ks -> do
-        modify' (\ss -> ss { ssWork = ks })
+        modify' (\ss -> ss {ssWork = ks})
         goDefer k
   goDefer k = do
     isOutSeen <- gets (Set.member k . ssOutSeen)
@@ -67,7 +69,7 @@ topoSortNext findRefs = goNext where
                 let deps = Set.difference refs (ssOutSeen ss)
                     deferSeen' = Set.insert k (ssDeferSeen ss)
                     defer' = SortDeps k deps :<| ssDefer ss
-                in ss { ssDeferSeen = deferSeen', ssDefer = defer' }
+                in  ss {ssDeferSeen = deferSeen', ssDefer = defer'}
               goUndefer
   goUndefer = do
     defer <- gets ssDefer
@@ -79,21 +81,22 @@ topoSortNext findRefs = goNext where
             modify' $ \ss ->
               let outSeen' = Set.insert k (ssOutSeen ss)
                   deferSeen' = Set.delete k (ssDeferSeen ss)
-              in ss { ssOutSeen = outSeen', ssDeferSeen = deferSeen', ssDefer = defer' }
+              in  ss {ssOutSeen = outSeen', ssDeferSeen = deferSeen', ssDefer = defer'}
             pure (Just k)
           Just (k', dks') -> do
             modify' $ \ss ->
               let defer'' = SortDeps k dks' :<| defer'
-              in ss { ssDefer = defer'' }
+              in  ss {ssDefer = defer''}
             goDefer k'
 
 topoSortAdd :: (Ord k) => [k] -> SortM k ()
 topoSortAdd ks = modify' $ \ss ->
   let ks' = Seq.fromList (filter (\k -> not (Set.member k (ssOutSeen ss) || Set.member k (ssDeferSeen ss))) ks)
-  in ss { ssWork = ssWork ss <> ks' }
+  in  ss {ssWork = ssWork ss <> ks'}
 
 topoSort :: (Ord k) => (k -> Maybe (Set k)) -> [k] -> Either (TopoErr k) (Seq k)
-topoSort findRefs = fmap fst . runSortM (goGather Empty) . initSortSt where
+topoSort findRefs = fmap fst . runSortM (goGather Empty) . initSortSt
+ where
   goGather !acc = do
     mk <- topoSortNext findRefs
     case mk of
@@ -112,4 +115,3 @@ topoEval findValRefs m f = fmap (flip execState Map.empty . go) (topoSort findRe
         Just v -> do
           modify' (\c -> Map.insert k (f (c Map.!) v) c)
           go ks
-

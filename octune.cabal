@@ -34,7 +34,6 @@ library
       Data.Topo
       Octune.Annotate
       Octune.CodeGen.NewSamplesGen
-      Octune.CodeGen.OpGen
       Octune.CodeGen.SamplesGen
       Octune.CodeGen.WAVEGen
       Octune.NameResolution
