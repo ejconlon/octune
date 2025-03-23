@@ -3,9 +3,10 @@ module Data.Sounds where
 import Control.DeepSeq (NFData (..))
 import Control.Exception (Exception)
 import Control.Monad (join, unless, when, (>=>))
+import Control.Monad.Except (Except, runExcept, throwError)
 import Control.Monad.Primitive (PrimMonad (..), RealWorld)
 import Control.Monad.Reader (Reader, ReaderT (..), ask, asks, local, runReader)
-import Control.Monad.State.Strict (State, modify', runState)
+import Control.Monad.State.Strict (State, StateT, execStateT, gets, modify', runState)
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
 import Dahdit.LiftedPrimArray (LiftedPrimArray (..))
@@ -40,9 +41,11 @@ import Data.Primitive.Types (Prim)
 import Data.STRef.Strict (newSTRef, readSTRef, writeSTRef)
 import Data.Semigroup (Max (..), Sum (..))
 import Data.Sequence (Seq (..))
+import Data.Sequence qualified as Seq
 import Data.Set (Set)
 import Data.Set qualified as Set
-import Data.Topo (TopoErr, topoEval)
+import Data.Topo (TopoErr (..), topoEval, topoSort)
+import Data.Typeable (Typeable)
 import Paths_octune (getDataFileName)
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -321,18 +324,18 @@ cataOp2Anno f = go
 
 type LenM n = ReaderT (Map n (Maybe ElemCount)) (State (Map n (Max ElemCount)))
 
-runLenM :: LenM n a -> Map n (Maybe ElemCount) -> Map n (Max ElemCount) -> (a, Map n (Max ElemCount))
-runLenM m = runState . runReaderT m
+runLenM :: Map n (Maybe ElemCount) -> Map n (Max ElemCount) -> LenM n a -> (a, Map n (Max ElemCount))
+runLenM r s m = runState (runReaderT m r) s
 
 -- Given available length and original definition,
 -- Returns (calculated length, annotated translation).
 -- Properties:
 -- 1. If it's possible to infer a length, it will be GTE the calculated length.
 -- 2. The calculated length will be LTE available length.
-opAnnoLenF :: (Ord n) => ElemCount -> OpF n (Op n) -> LenM n (Op2Anno ElemCount n)
-opAnnoLenF = go
+opAnnoLen :: (Ord n) => ElemCount -> Op n -> LenM n (Op2Anno ElemCount n)
+opAnnoLen = go
  where
-  go i = \case
+  go i (Op opf) = case opf of
     OpEmpty -> do
       pure (Op2Anno (Anno 0 Op2Empty))
     OpSamp s -> do
@@ -340,25 +343,25 @@ opAnnoLenF = go
       pure (Op2Anno (Anno l (Op2Samp s)))
     OpBound b r -> do
       let l = min i b
-      r'@(Op2Anno (Anno ml f)) <- go l (unOp r)
+      r'@(Op2Anno (Anno ml f)) <- go l r
       pure (Op2Anno (Anno l (if ml == l then f else Op2Concat (r' :<| Empty))))
     OpCut x r -> do
       let l = min i (floor (x * fromIntegral i))
-      r'@(Op2Anno (Anno ml f)) <- go l (unOp r)
+      r'@(Op2Anno (Anno ml f)) <- go l r
       pure (Op2Anno (Anno ml (if ml == l then f else Op2Concat (r' :<| Empty))))
     OpRepeat r -> do
-      r'@(Op2Anno (Anno ml _)) <- go i (unOp r)
+      r'@(Op2Anno (Anno ml _)) <- go i r
       let (n, m) = divMod i ml
           f' = Op2Replicate (unElemCount n) r'
       if m == 0
         then pure (Op2Anno (Anno i f'))
         else do
           let q = Op2Anno (Anno (ml * n) f')
-          q'@(Op2Anno (Anno ml' _)) <- go m (unOp r)
+          q'@(Op2Anno (Anno ml' _)) <- go m r
           pure (Op2Anno (Anno (ml * n + ml') (Op2Concat (q :<| q' :<| Empty))))
     OpReplicate n r -> do
       let l = div i (ElemCount n)
-      r'@(Op2Anno (Anno ml _)) <- go l (unOp r)
+      r'@(Op2Anno (Anno ml _)) <- go l r
       pure (Op2Anno (Anno (ml * ElemCount n) (Op2Replicate n r')))
     OpConcat rs -> do
       let g !tot !qs = \case
@@ -367,12 +370,12 @@ opAnnoLenF = go
               let left = i - tot
               if left > 0
                 then do
-                  q@(Op2Anno (Anno ml _)) <- go left (unOp p)
+                  q@(Op2Anno (Anno ml _)) <- go left p
                   g (tot + ml) (qs :|> q) ps
                 else pure (Op2Anno (Anno tot (Op2Concat qs)))
       g 0 Empty rs
     OpMerge rs -> do
-      ps <- traverse (go i . unOp) rs
+      ps <- traverse (go i) rs
       let ml = maximum (fmap (annoKey . unOp2Anno) (toList ps))
       pure (Op2Anno (Anno ml (Op2Merge ps)))
     OpRef n -> do
@@ -382,11 +385,64 @@ opAnnoLenF = go
         Nothing -> i <$ modify' (Map.alter (Just . maybe (Max i) (<> Max i)) n)
       pure (Op2Anno (Anno l (Op2Ref n)))
 
--- TODO operate on Map and to through in reverse topo order (top down)
--- if it has an inferred len, call anno len. at the end merge maps
--- and assert you have lens for all. then anno len for the ones originally skipped
--- opAnnoLen :: (n -> ElemCount) -> ElemCount -> Op n -> Op2Anno ElemCount n
--- opAnnoLen onRef i (Op f) = opAnnoLenF onRef i f
+data AnnoErr n
+  = AnnoErrTopo !(TopoErr n)
+  | AnnoErrOrphan !n
+  deriving stock (Eq, Ord, Show)
+
+instance (Show n, Typeable n) => Exception (AnnoErr n)
+
+data AnnoSt n = AnnoSt
+  { asSpaceNeed :: !(Map n (Max ElemCount))
+  , asAnnoOps :: !(Map n (Op2Anno ElemCount n))
+  }
+
+type AnnoM n = ReaderT (Map n (Maybe ElemCount)) (StateT (AnnoSt n) (Except (AnnoErr n)))
+
+execAnnoM
+  :: Map n (Maybe ElemCount)
+  -> Map n (Max ElemCount)
+  -> Map n (Op2Anno ElemCount n)
+  -> AnnoM n ()
+  -> Either (AnnoErr n) (Map n (Op2Anno ElemCount n))
+execAnnoM r s1 s2 m = fmap asAnnoOps (runExcept (execStateT (runReaderT m r) (AnnoSt s1 s2)))
+
+lenToAnnoM :: LenM n a -> AnnoM n a
+lenToAnnoM m = do
+  r <- ask
+  s <- gets asSpaceNeed
+  let (a, s') = runLenM r s m
+  modify' (\as -> as {asSpaceNeed = s'})
+  pure a
+
+-- | Annotate all ops with lengths, inferring bottom-up then top-down.
+opAnnoLenTopo
+  :: forall n. (Ord n) => Map n (Op n) -> Map n (Maybe ElemCount) -> Either (AnnoErr n) (Map n (Op2Anno ElemCount n))
+opAnnoLenTopo m n = execAnnoM n Map.empty Map.empty $ do
+  let calc k val = do
+        let op = m Map.! k
+        anno <- lenToAnnoM (opAnnoLen val op)
+        modify' (\as -> as {asAnnoOps = Map.insert k anno (asAnnoOps as)})
+  -- Calculate reverse topo order (top down)
+  ks <-
+    either
+      (throwError . AnnoErrTopo)
+      (pure . Seq.reverse)
+      (topoSort (fmap opRefs . flip Map.lookup m) (Map.keys m))
+  -- First round - if it has an inferred len, annotate.
+  for_ ks $ \k -> do
+    minf <- asks (join . Map.lookup k)
+    for_ minf (calc k)
+  -- Second round - if found a new len, annotate. Otherwise fail.
+  for_ ks $ \k -> do
+    minf <- asks (join . Map.lookup k)
+    case minf of
+      Just _ -> pure ()
+      Nothing -> do
+        mfound <- gets (Map.lookup k . asSpaceNeed)
+        case mfound of
+          Nothing -> throwError (AnnoErrOrphan k)
+          Just found -> calc k (getMax found)
 
 data OpEnv = OpEnv
   { oeOff :: !ElemCount
