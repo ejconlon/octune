@@ -32,9 +32,10 @@ dependencies:
 - proteaaudio
 - mtl
 - transformers
+- bowtie
+- recursion-schemes
 # Test deps - TODO move to suite
 - prop-unit
-- hedgehog >= 1.5
 
 default-extensions:
 - BangPatterns
@@ -56,6 +57,7 @@ default-extensions:
 - LambdaCase
 - MultiParamTypeClasses
 - MultiWayIf
+- PatternSynonyms
 - Rank2Types
 - ScopedTypeVariables
 - StandaloneDeriving

@@ -1,5 +1,6 @@
 module Octune.Test (main) where
 
+import Bowtie (Fix (..), pattern MemoP)
 import Control.Monad (join)
 import Dahdit.Sizes (ElemCount (..))
 import Data.Foldable (for_)
@@ -10,7 +11,7 @@ import Data.Ratio ((%))
 import Data.Sequence (Seq (..))
 import Data.Set (Set)
 import Data.Set qualified as Set
-import Data.Sounds (Anno (..), InternalSamples (..), Op (..), Op2Anno (..), OpF (..), opAnnoLenTopo, opInferLenTopo)
+import Data.Sounds (InternalSamples (..), Op, OpF (..), opAnnoLenTopo, opInferLenTopo)
 import PropUnit (Gen, assert, forAll, testGroup, testMain, testProp, testUnit, (===))
 import PropUnit.Hedgehog.Gen qualified as Gen
 import PropUnit.Hedgehog.Range qualified as Range
@@ -46,7 +47,7 @@ main = testMain $ \lim ->
                       -- Get the annotated length
                       case Map.lookup k annotated of
                         Nothing -> fail "Missing annotation"
-                        Just (Op2Anno (Anno annLen _)) -> do
+                        Just (MemoP annLen _) -> do
                           -- Inferred length should be >= annotated length
                           assert $ infLen >= annLen
     ]
@@ -56,24 +57,24 @@ genOp validKeys = genR
  where
   genR = Gen.recursive Gen.choice nonRecursive recursive
   nonRecursive =
-    [ pure (Op OpEmpty)
-    , Op . OpSamp . InternalSamples . primArrayFromList
+    [ pure (Fix OpEmpty)
+    , Fix . OpSamp . InternalSamples . primArrayFromList
         <$> Gen.list (Range.linear 1 10) (Gen.int32 (Range.linear minBound maxBound))
     ]
-      ++ ([Op . OpRef <$> Gen.element validKeys | not (null validKeys)])
+      ++ ([Fix . OpRef <$> Gen.element validKeys | not (null validKeys)])
   recursive =
     [ Gen.subtermM genR $ \r -> do
         n <- Gen.int (Range.linear 1 10)
-        pure (Op (OpBound (ElemCount n) r))
+        pure (Fix (OpBound (ElemCount n) r))
     , Gen.subtermM genR $ \r -> do
         n <- Gen.integral (Range.linear 1 9)
-        pure (Op (OpCut (n % 10) r))
-    , Gen.subterm genR (Op . OpRepeat)
+        pure (Fix (OpCut (n % 10) r))
+    , Gen.subterm genR (Fix . OpRepeat)
     , Gen.subtermM genR $ \r -> do
         n <- Gen.int (Range.linear 1 3)
-        pure (Op (OpReplicate n r))
-    , genSeqSubterm genR (Op . OpConcat)
-    , genSeqSubterm genR (Op . OpMerge)
+        pure (Fix (OpReplicate n r))
+    , genSeqSubterm genR (Fix . OpConcat)
+    , genSeqSubterm genR (Fix . OpMerge)
     ]
 
 genSeqSubterm :: Gen a -> (Seq a -> a) -> Gen a
