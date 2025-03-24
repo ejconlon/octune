@@ -44,16 +44,16 @@ topoSortNext :: (Ord k) => (k -> Maybe (Set k)) -> SortM k (Maybe k)
 topoSortNext findRefs = goNext
  where
   goNext = do
-    work <- gets ssWork
-    case work of
+    defer <- gets ssDefer
+    case defer of
       Empty -> do
-        defer <- gets ssDefer
-        case defer of
+        work <- gets ssWork
+        case work of
           Empty -> pure Nothing
-          _ -> goUndefer
-      k :<| ks -> do
-        modify' (\ss -> ss {ssWork = ks})
-        goDefer k
+          k :<| ks -> do
+            modify' (\ss -> ss {ssWork = ks})
+            goDefer k
+      _ -> goUndefer
   goDefer k = do
     isOutSeen <- gets (Set.member k . ssOutSeen)
     if isOutSeen
@@ -88,11 +88,6 @@ topoSortNext findRefs = goNext
               let defer'' = SortDeps k dks' :<| defer'
               in  ss {ssDefer = defer''}
             goDefer k'
-
-topoSortAdd :: (Ord k) => [k] -> SortM k ()
-topoSortAdd ks = modify' $ \ss ->
-  let ks' = Seq.fromList (filter (\k -> not (Set.member k (ssOutSeen ss) || Set.member k (ssDeferSeen ss))) ks)
-  in  ss {ssWork = ssWork ss <> ks'}
 
 topoSort :: (Ord k) => (k -> Maybe (Set k)) -> [k] -> Either (TopoErr k) (Seq k)
 topoSort findRefs = fmap fst . runSortM (goGather Empty) . initSortSt
