@@ -3,39 +3,43 @@
 module Octune.Test (main) where
 
 import Bowtie (Fix (..), pattern MemoP)
+import Control.Exception (throwIO)
 import Control.Monad (forM, join)
+import Control.Monad.IO.Class (MonadIO, liftIO)
+import Dahdit.Audio.Binary (QuietLiftedArray (..))
+import Dahdit.Audio.Wav.Simple (WAVESamples (..))
+import Dahdit.LiftedPrimArray (LiftedPrimArray (..))
 import Dahdit.Sizes (ElemCount (..))
 import Data.Foldable (for_, toList)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Primitive.ByteArray (ByteArray (..), sizeofByteArray)
 import Data.Primitive.PrimArray (primArrayFromList)
 import Data.Ratio ((%))
 import Data.Sequence (Seq (..))
 import Data.Sequence qualified as Seq
 import Data.Set (Set)
 import Data.Set qualified as Set
-import Data.Sounds (InternalSamples (..), Op, OpF (..), opAnnoLenTopo, opInferLenTopo)
+import Data.Sounds (InternalSamples (..), Op, OpErr, OpF (..), isampsIsNull, opAnnoLenTopo, opInferLenTopo, opToWave)
 import Data.Topo (TopoErr, topoSort)
-import PropUnit (Gen, assert, forAll, testGroup, testMain, testProp, testUnit, (===))
+import PropUnit (Gen, TestLimit, TestTree, assert, forAll, testGroup, testMain, testProp, testUnit, (===))
 import PropUnit.Hedgehog.Gen qualified as Gen
 import PropUnit.Hedgehog.Range qualified as Range
 
 simpleTopoSort :: [(Int, [Int])] -> Either (TopoErr Int) (Seq Int)
 simpleTopoSort deps = topoSort (fmap Set.fromList . flip lookup deps) (fmap fst deps)
 
-main :: IO ()
-main = testMain $ \lim ->
+topoSortTests :: TestLimit -> TestTree
+topoSortTests lim =
   testGroup
-    "suite"
-    [ testUnit "Simple test example" $
-        2 + 2 === (4 :: Int)
-    , testUnit "topoSort simple case" $
+    "topoSort"
+    [ testUnit "simple case" $
         simpleTopoSort [(1, [2]), (2, [3]), (3, [])] === Right (Seq.fromList [3, 2, 1])
-    , testUnit "topoSort empty case" $ do
+    , testUnit "empty case" $ do
         simpleTopoSort [] === Right Seq.empty
-    , testUnit "topoSort single node" $ do
+    , testUnit "single node" $ do
         simpleTopoSort [(1, [])] === Right (Seq.singleton 1)
-    , testProp "topoSort respects dependencies" lim $ do
+    , testProp "respects dependencies" lim $ do
         -- Generate a list of nodes with random dependencies
         nodes <- forAll $ Gen.list (Range.linear 1 10) (Gen.int (Range.linear 0 10))
         deps <- forAll $ forM nodes $ \n -> do
@@ -55,7 +59,19 @@ main = testMain $ \lim ->
                 case lookup n deps of
                   Nothing -> pure ()
                   Just ds -> assert (m `notElem` ds)
-    , testProp "opInferLenTopo upper bounds opAnnoLenTopo" lim $ do
+    ]
+
+opToWaveSimple :: (MonadIO m) => OpF Char (Op Char) -> m (Either (OpErr Char) InternalSamples)
+opToWaveSimple = liftIO . opToWave 'a' . Fix
+
+opTests :: TestLimit -> TestTree
+opTests lim =
+  testGroup
+    "op"
+    [ testUnit "opToWave OpEmpty yields empty samples" $ do
+        samps <- either (liftIO . throwIO) pure =<< opToWaveSimple OpEmpty
+        assert (isampsIsNull samps)
+    , testProp "upper bounds opAnnoLenTopo" lim $ do
         -- Generate a set of valid keys
         keys <- forAll $ Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z'])
         let validKeys = Set.fromList keys
@@ -83,6 +99,14 @@ main = testMain $ \lim ->
                         Just (MemoP annLen _) -> do
                           -- Inferred length should be >= annotated length
                           assert $ infLen >= annLen
+    ]
+
+main :: IO ()
+main = testMain $ \lim ->
+  testGroup
+    "suite"
+    [ topoSortTests lim
+    , opTests lim
     ]
 
 genOp :: [n] -> Gen (Op n)

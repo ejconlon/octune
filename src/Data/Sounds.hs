@@ -283,7 +283,7 @@ opRefs = cata $ \case
 
 opInferLenF :: (n -> Maybe ElemCount) -> OpF n (Maybe ElemCount) -> Maybe ElemCount
 opInferLenF onRef = \case
-  OpEmpty -> Nothing
+  OpEmpty -> Just 0
   OpSamp s -> Just (isampsLength s)
   OpBound l _ -> Just l
   OpCut _ r -> r
@@ -537,13 +537,13 @@ data OpErr n
 
 instance (Show n, Typeable n) => Exception (OpErr n)
 
-opsToWave :: (Ord n) => Map n (Op n) -> n -> IO (Either (OpErr n) WAVESamples)
+opsToWave :: (Ord n) => Map n (Op n) -> n -> IO (Either (OpErr n) InternalSamples)
 opsToWave defs n = runExceptT $ do
   infs <- either (throwError . OpErrInfer) pure (opInferLenTopo defs)
   anns <- either (throwError . OpErrAnno) pure (opAnnoLenTopo defs infs)
   root <- maybe (throwError (OpErrRoot n)) pure (Map.lookup n anns)
   arr <- liftIO $ execOpM anns (memoKey root) (goOpToWave root)
-  pure (isampsToWave (InternalSamples arr))
+  pure (InternalSamples arr)
 
-opToWave :: (Ord n) => n -> Op n -> IO (Either (OpErr n) WAVESamples)
+opToWave :: (Ord n) => n -> Op n -> IO (Either (OpErr n) InternalSamples)
 opToWave n op = opsToWave (Map.singleton n op) n
