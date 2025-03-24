@@ -20,7 +20,17 @@ import Data.Sequence (Seq (..))
 import Data.Sequence qualified as Seq
 import Data.Set (Set)
 import Data.Set qualified as Set
-import Data.Sounds (InternalSamples (..), Op, OpErr, OpF (..), isampsIsNull, opAnnoLenTopo, opInferLenTopo, opToWave)
+import Data.Sounds
+  ( InternalSamples (..)
+  , Op
+  , OpErr
+  , OpF (..)
+  , isampsFromList
+  , isampsIsNull
+  , opAnnoLenTopo
+  , opInferLenTopo
+  , opToWave
+  )
 import Data.Topo (TopoErr, topoSort)
 import PropUnit (Gen, TestLimit, TestTree, assert, forAll, testGroup, testMain, testProp, testUnit, (===))
 import PropUnit.Hedgehog.Gen qualified as Gen
@@ -68,9 +78,19 @@ opTests :: TestLimit -> TestTree
 opTests lim =
   testGroup
     "op"
-    [ testUnit "opToWave OpEmpty yields empty samples" $ do
-        samps <- either (liftIO . throwIO) pure =<< opToWaveSimple OpEmpty
-        assert (isampsIsNull samps)
+    [ testUnit "opToWave OpEmpty" $ do
+        outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple OpEmpty
+        assert (isampsIsNull outSamps)
+    , testUnit "opToWave OpSamp" $ do
+        let inSamps = isampsFromList [1, 2, 3]
+        outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple (OpSamp inSamps)
+        outSamps === inSamps
+    , testUnit "opToWave OpConcat" $ do
+        let inSamps1 = isampsFromList [1 .. 3]
+            inSamps2 = isampsFromList [4 .. 6]
+            op = OpConcat (Seq.fromList [Fix (OpSamp inSamps1), Fix (OpSamp inSamps2)])
+        outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
+        outSamps === isampsFromList [1 .. 6]
     , testProp "upper bounds opAnnoLenTopo" lim $ do
         -- Generate a set of valid keys
         keys <- forAll $ Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z'])

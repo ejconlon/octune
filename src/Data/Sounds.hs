@@ -314,9 +314,6 @@ data Op2F n r
 
 type Op2Anno o n = Memo (Op2F n) o
 
-cataOp2Anno :: (Op2F n r -> Reader o r) -> Op2Anno o n -> r
-cataOp2Anno = memoCata
-
 type LenM n = ReaderT (Map n (Maybe ElemCount)) (State (Map n (Max ElemCount)))
 
 runLenM :: Map n (Maybe ElemCount) -> Map n (Max ElemCount) -> LenM n a -> (a, Map n (Max ElemCount))
@@ -482,13 +479,13 @@ handleOpReplicate clen n r = do
       copyMutablePrimArray b (unElemCount off') b (unElemCount off) (unElemCount clen)
 
 handleOpConcat :: (Ord n) => ElemCount -> Seq (Op2Anno ElemCount n) -> OpM n ()
-handleOpConcat clen rs = do
+handleOpConcat _ rs = do
   off <- asks oeOff
   parFor (InclusiveRange 0 (length rs - 1)) $ \i -> do
     let r = Seq.index rs i
-        off' = off + ElemCount i * clen
-    local (\env -> env {oeOff = off'}) $ do
-      goOpToWave r
+        elemOff = sum (take i (map memoKey (toList rs)))
+        off' = off + elemOff
+    local (\env -> env {oeOff = off'}) (goOpToWave r)
 
 handleOpMerge :: (Ord n) => ElemCount -> Seq (Op2Anno ElemCount n) -> OpM n ()
 handleOpMerge _ rs = do
