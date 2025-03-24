@@ -1,15 +1,14 @@
 module Octune.Test (main) where
 
-import Test.Tasty (TestTree, defaultMain, testGroup)
-import Test.Tasty.HUnit (testCase, (@?=))
+import PropUnit (TestTree, testMain, testGroup, testUnit, (===))
 
 main :: IO ()
-main = defaultMain tests
+main = testMain (const tests)
 
 tests :: TestTree
 tests =
   testGroup
     "Test Suite"
-    [ testCase "Simple test example" $
-        2 + 2 @?= (4 :: Int)
+    [ testUnit "Simple test example" $
+        2 + 2 === (4 :: Int)
     ]

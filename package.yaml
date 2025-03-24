@@ -33,8 +33,7 @@ dependencies:
 - mtl
 - transformers
 # Test deps - TODO move to suite
-- tasty
-- tasty-hunit
+- prop-unit
 
 default-extensions:
 - BangPatterns

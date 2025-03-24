@@ -95,9 +95,8 @@ library
     , mtl
     , optparse-applicative
     , primitive
+    , prop-unit
     , proteaaudio
-    , tasty
-    , tasty-hunit
     , text
     , transformers
   default-language: Haskell2010
@@ -153,9 +152,8 @@ executable octune
     , octune
     , optparse-applicative
     , primitive
+    , prop-unit
     , proteaaudio
-    , tasty
-    , tasty-hunit
     , text
     , transformers
   default-language: Haskell2010
@@ -210,9 +208,8 @@ test-suite octune-test
     , octune
     , optparse-applicative
     , primitive
+    , prop-unit
     , proteaaudio
-    , tasty
-    , tasty-hunit
     , text
     , transformers
   default-language: Haskell2010

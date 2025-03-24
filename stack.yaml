@@ -16,3 +16,4 @@ extra-deps:
   - dahdit
   - dahdit-audio
 - proteaaudio-0.10.1
+- prop-unit-1.0.1
