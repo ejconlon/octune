@@ -32,6 +32,9 @@ dependencies:
 - proteaaudio
 - mtl
 - transformers
+# Test deps - TODO move to suite
+- tasty
+- tasty-hunit
 
 default-extensions:
 - BangPatterns
@@ -88,7 +91,7 @@ executables:
 
 tests:
   octune-test:
-    main:                Spec.hs
+    main:                Main.hs
     source-dirs:         test
     ghc-options:
     - -threaded
