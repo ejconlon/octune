@@ -351,14 +351,17 @@ opAnnoLen = go
       pure (Op2Anno (Anno ml (if ml == l then f else Op2Concat (r' :<| Empty))))
     OpRepeat r -> do
       r'@(Op2Anno (Anno ml _)) <- go i r
-      let (n, m) = divMod i ml
-          f' = Op2Replicate (unElemCount n) r'
-      if m == 0
-        then pure (Op2Anno (Anno i f'))
+      if ml == 0
+        then pure (Op2Anno (Anno 0 Op2Empty))
         else do
-          let q = Op2Anno (Anno (ml * n) f')
-          q'@(Op2Anno (Anno ml' _)) <- go m r
-          pure (Op2Anno (Anno (ml * n + ml') (Op2Concat (q :<| q' :<| Empty))))
+          let (n, m) = divMod i ml
+              f' = Op2Replicate (unElemCount n) r'
+          if m == 0
+            then pure (Op2Anno (Anno i f'))
+            else do
+              let q = Op2Anno (Anno (ml * n) f')
+              q'@(Op2Anno (Anno ml' _)) <- go m r
+              pure (Op2Anno (Anno (ml * n + ml') (Op2Concat (q :<| q' :<| Empty))))
     OpReplicate n r -> do
       let l = div i (ElemCount n)
       r'@(Op2Anno (Anno ml _)) <- go l r
@@ -376,7 +379,9 @@ opAnnoLen = go
       g 0 Empty rs
     OpMerge rs -> do
       ps <- traverse (go i) rs
-      let ml = maximum (fmap (annoKey . unOp2Anno) (toList ps))
+      let ml = case fmap (annoKey . unOp2Anno) (toList ps) of
+            [] -> i
+            xs -> maximum xs
       pure (Op2Anno (Anno ml (Op2Merge ps)))
     OpRef n -> do
       mx <- asks (join . Map.lookup n)

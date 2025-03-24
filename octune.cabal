@@ -89,6 +89,7 @@ library
     , dahdit-audio >=0.8
     , deepseq
     , either
+    , hedgehog >=1.5
     , lens
     , megaparsec
     , monad-par
@@ -145,6 +146,7 @@ executable octune
     , dahdit-audio >=0.8
     , deepseq
     , either
+    , hedgehog >=1.5
     , lens
     , megaparsec
     , monad-par
@@ -201,6 +203,7 @@ test-suite octune-test
     , dahdit-audio >=0.8
     , deepseq
     , either
+    , hedgehog >=1.5
     , lens
     , megaparsec
     , monad-par
