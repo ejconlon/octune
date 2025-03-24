@@ -5,6 +5,7 @@ import Control.DeepSeq (NFData (..))
 import Control.Exception (Exception)
 import Control.Monad (join, unless, when, (>=>))
 import Control.Monad.Except (Except, runExcept, throwError)
+import Control.Monad.Par (InclusiveRange (..), parFor, parMapM)
 import Control.Monad.Primitive (PrimMonad (..), RealWorld)
 import Control.Monad.Reader (Reader, ReaderT (..), ask, asks, local)
 import Control.Monad.State.Strict (State, StateT, execStateT, gets, modify', runState)
@@ -488,20 +489,22 @@ handleOpReplicate clen n r = do
 handleOpConcat :: ElemCount -> Seq (Op2Anno ElemCount n) -> OpM ()
 handleOpConcat clen rs = do
   off <- asks oeOff
-  for_ (zip [0 ..] (toList rs)) $ \(i, r) -> do
-    let off' = off + i * clen
+  parFor (InclusiveRange 0 (length rs - 1)) $ \i -> do
+    let r = Seq.index rs i
+        off' = off + ElemCount i * clen
     local (\env -> env {oeOff = off'}) $ do
       goOpToWave r
 
 handleOpMerge :: ElemCount -> Seq (Op2Anno ElemCount n) -> OpM ()
 handleOpMerge clen rs = do
   OpEnv off buf <- ask
-  tmp <- newPrimArray (unElemCount clen)
-  local (\env -> env {oeOff = 0, oeBuf = tmp}) $ do
-    for_ rs $ \r -> do
-      setPrimArray tmp 0 (unElemCount clen) 0
-      goOpToWave r
-      mergeMutableIntoPrimArray (+) buf (unElemCount off) tmp 0 (unElemCount clen)
+  tmps <- flip parMapM (toList rs) $ \r -> do
+    tmp <- newPrimArray (unElemCount clen)
+    setPrimArray tmp 0 (unElemCount clen) 0
+    local (\env -> env {oeOff = 0, oeBuf = tmp}) (goOpToWave r)
+    pure tmp
+  for_ tmps $ \tmp -> do
+    mergeMutableIntoPrimArray (+) buf (unElemCount off) tmp 0 (unElemCount clen)
 
 goOpToWave :: Op2Anno ElemCount n -> OpM ()
 goOpToWave (MemoP clen f) = case f of

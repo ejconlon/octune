@@ -8,7 +8,7 @@ where
 
 import Control.Monad.IO.Class (MonadIO (..))
 import Control.Monad.Par ()
-import Control.Monad.Par.Class (ParFuture (..))
+import Control.Monad.Par.Class (ParFuture (..), ParIVar (..))
 import Control.Monad.Par.IO (ParIO)
 import Control.Monad.Par.IO qualified as PIO
 import Control.Monad.Par.Scheds.TraceInternal (IVar)
@@ -17,7 +17,7 @@ import Control.Monad.Reader (MonadReader, ReaderT (..))
 import GHC.IO (IO (..))
 
 newtype PrimPar a = PrimPar {unPrimPar :: ParIO a}
-  deriving newtype (Functor, Applicative, Monad, MonadIO, ParFuture IVar)
+  deriving newtype (Functor, Applicative, Monad, MonadIO, ParFuture IVar, ParIVar IVar)
 
 runPrimPar :: PrimPar a -> IO a
 runPrimPar = PIO.runParIO . unPrimPar
@@ -42,6 +42,11 @@ instance ParFuture IVar (ReadPar r) where
   -- get :: IVar a -> ReadPar r a
   get = ReadPar . ReaderT . const . get
 
+instance ParIVar IVar (ReadPar r) where
+  new = ReadPar (ReaderT (const new))
+  fork m = ReadPar (ReaderT (fork . runReaderT (unReadPar m)))
+  put_ i = ReadPar . ReaderT . const . put_ i
+
 instance PrimMonad (ReadPar r) where
   type PrimState (ReadPar r) = RealWorld
-  primitive f = ReadPar (ReaderT (const (liftIO (IO f))))
+  primitive f = ReadPar $ ReaderT $ const $ primitive f
