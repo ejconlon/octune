@@ -1,11 +1,14 @@
 module Data.Sounds where
 
 import Bowtie (Fix (..), Memo, memoCata, memoKey, pattern MemoP)
+import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, withMVar)
 import Control.DeepSeq (NFData (..))
 import Control.Exception (Exception)
-import Control.Monad (join, unless, when, (>=>))
-import Control.Monad.Except (Except, runExcept, throwError)
-import Control.Monad.Par (InclusiveRange (..), parFor, parMapM)
+import Control.Monad (join, unless, void, when, (>=>))
+import Control.Monad.Except (Except, runExcept, runExceptT, throwError)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Par (IVar, InclusiveRange (..), parFor)
+import Control.Monad.Par.Class qualified as Par
 import Control.Monad.Primitive (PrimMonad (..), RealWorld)
 import Control.Monad.Reader (Reader, ReaderT (..), ask, asks, local)
 import Control.Monad.State.Strict (State, StateT, execStateT, gets, modify', runState)
@@ -53,6 +56,12 @@ import Paths_octune (getDataFileName)
 import System.IO.Unsafe (unsafePerformIO)
 
 -- Prim adapters
+
+zeroPrimArray :: (PrimMonad m, Prim a, Num a) => Int -> m (MutablePrimArray (PrimState m) a)
+zeroPrimArray n = do
+  marr <- newPrimArray n
+  setPrimArray marr 0 n 0
+  pure marr
 
 replicateWholePrimArray :: (Prim a) => Int -> PrimArray a -> PrimArray a
 replicateWholePrimArray n sarr = runPrimArray $ do
@@ -439,54 +448,40 @@ opAnnoLenTopo m n = execAnnoM n Map.empty Map.empty $ do
           Nothing -> throwError (AnnoErrOrphan k)
           Just found -> calc k (getMax found)
 
-data OpEnv = OpEnv
-  { oeOff :: !ElemCount
-  , oeBuf :: !(MutablePrimArray RealWorld Int32)
+data OpEnv n = OpEnv
+  { oeDefs :: !(Map n (Op2Anno ElemCount n))
+  , oeFutVar :: !(MVar (Map n (IVar (PrimArray Int32))))
+  , oeOff :: !ElemCount
+  , oeBufVar :: !(MVar (MutablePrimArray RealWorld Int32))
   }
   deriving stock (Eq)
 
-data OpErr
-  = OpErrInfer
-  | OpErrOverflow
-  deriving stock (Eq, Ord, Show)
+type OpM n = ReadPar (OpEnv n)
 
-instance Exception OpErr
-
-type OpM = ReadPar OpEnv
-
-runOpM :: OpM a -> OpEnv -> IO a
-runOpM = runReadPar
-
-execOpM :: ElemCount -> OpM () -> IO (PrimArray Int32)
-execOpM len act = do
+execOpM :: Map n (Op2Anno ElemCount n) -> ElemCount -> OpM n () -> IO (PrimArray Int32)
+execOpM defs len act = do
   buf <- newPrimArray (unElemCount len)
-  let env = OpEnv {oeOff = 0, oeBuf = buf}
-  runOpM act env
+  bufVar <- newMVar buf
+  futVar <- newMVar Map.empty
+  let env = OpEnv {oeDefs = defs, oeFutVar = futVar, oeOff = 0, oeBufVar = bufVar}
+  runReadPar act env
   unsafeFreezePrimArray buf
 
--- opToWave :: Op n -> IO (Either OpErr WAVESamples)
--- opToWave op =
---   case opInferLen op of
---     Nothing -> pure (Left OpErrInfer)
---     Just len -> do
---       let an = opAnnoLen len op
---       arr <- execOpM len (goOpToWave an)
---       pure (Right (isampsToWave (InternalSamples arr)))
-
-handleOpSamp :: ElemCount -> InternalSamples -> OpM ()
+handleOpSamp :: ElemCount -> InternalSamples -> OpM n ()
 handleOpSamp clen (InternalSamples src) = do
-  OpEnv off buf <- ask
-  copyPrimArray buf (unElemCount off) src 0 (unElemCount clen)
+  OpEnv _ _ off bufVar <- ask
+  liftIO $ withMVar bufVar $ \b -> copyPrimArray b (unElemCount off) src 0 (unElemCount clen)
 
-handleOpReplicate :: ElemCount -> Int -> Op2Anno ElemCount n -> OpM ()
+handleOpReplicate :: (Ord n) => ElemCount -> Int -> Op2Anno ElemCount n -> OpM n ()
 handleOpReplicate clen n r = do
-  OpEnv off buf <- ask
+  OpEnv _ _ off bufVar <- ask
   goOpToWave r
-  for_ [1 .. n - 1] $ \i -> do
-    let off' = off + ElemCount i * clen
-    copyMutablePrimArray buf (unElemCount off') buf (unElemCount off) (unElemCount clen)
+  liftIO $ withMVar bufVar $ \b -> do
+    for_ [1 .. n - 1] $ \i -> do
+      let off' = off + ElemCount i * clen
+      copyMutablePrimArray b (unElemCount off') b (unElemCount off) (unElemCount clen)
 
-handleOpConcat :: ElemCount -> Seq (Op2Anno ElemCount n) -> OpM ()
+handleOpConcat :: (Ord n) => ElemCount -> Seq (Op2Anno ElemCount n) -> OpM n ()
 handleOpConcat clen rs = do
   off <- asks oeOff
   parFor (InclusiveRange 0 (length rs - 1)) $ \i -> do
@@ -495,22 +490,60 @@ handleOpConcat clen rs = do
     local (\env -> env {oeOff = off'}) $ do
       goOpToWave r
 
-handleOpMerge :: ElemCount -> Seq (Op2Anno ElemCount n) -> OpM ()
-handleOpMerge clen rs = do
-  OpEnv off buf <- ask
-  tmps <- flip parMapM (toList rs) $ \r -> do
-    tmp <- newPrimArray (unElemCount clen)
-    setPrimArray tmp 0 (unElemCount clen) 0
-    local (\env -> env {oeOff = 0, oeBuf = tmp}) (goOpToWave r)
-    pure tmp
-  for_ tmps $ \tmp -> do
-    mergeMutableIntoPrimArray (+) buf (unElemCount off) tmp 0 (unElemCount clen)
+handleOpMerge :: (Ord n) => ElemCount -> Seq (Op2Anno ElemCount n) -> OpM n ()
+handleOpMerge _ rs = do
+  parFor (InclusiveRange 0 (length rs - 1)) $ \i -> do
+    let r = Seq.index rs i
+        rlen = memoKey r
+    tmp <- liftIO (zeroPrimArray (unElemCount rlen))
+    tmpVar <- liftIO (newMVar tmp)
+    local (\env -> env {oeOff = 0, oeBufVar = tmpVar}) (goOpToWave r)
+    OpEnv _ _ off bufVar <- ask
+    liftIO $ withMVar bufVar $ \b ->
+      mergeMutableIntoPrimArray (+) b (unElemCount off) tmp 0 (unElemCount rlen)
 
-goOpToWave :: Op2Anno ElemCount n -> OpM ()
+handleOpRef :: (Ord n) => ElemCount -> n -> OpM n ()
+handleOpRef clen n = do
+  OpEnv defs futVar off bufVar <- ask
+  let def = defs Map.! n
+  ivar <- Par.new
+  xvar <- liftIO $ modifyMVar futVar $ \fut -> do
+    pure $ case Map.lookup n fut of
+      Nothing -> (Map.insert n ivar fut, Nothing)
+      Just var -> (fut, Just var)
+  val <- case xvar of
+    Nothing -> do
+      void $ Par.spawn_ $ Par.put_ ivar =<< liftIO (execOpM defs clen (goOpToWave def))
+      Par.get ivar
+    Just yvar -> Par.get yvar
+  liftIO $ withMVar bufVar $ \b ->
+    copyPrimArray b (unElemCount off) val 0 (unElemCount clen)
+
+goOpToWave :: (Ord n) => Op2Anno ElemCount n -> OpM n ()
 goOpToWave (MemoP clen f) = case f of
   Op2Empty -> pure ()
   Op2Samp s -> handleOpSamp clen s
   Op2Replicate n r -> handleOpReplicate clen n r
   Op2Concat rs -> handleOpConcat clen rs
   Op2Merge rs -> handleOpMerge clen rs
-  Op2Ref _n -> error "TODO"
+  Op2Ref n -> handleOpRef clen n
+
+data OpErr n
+  = OpErrInfer !(TopoErr n)
+  | OpErrAnno !(AnnoErr n)
+  | OpErrRoot !n
+  | OpErrOverflow
+  deriving stock (Eq, Ord, Show)
+
+instance (Show n, Typeable n) => Exception (OpErr n)
+
+opsToWave :: (Ord n) => Map n (Op n) -> n -> IO (Either (OpErr n) WAVESamples)
+opsToWave defs n = runExceptT $ do
+  infs <- either (throwError . OpErrInfer) pure (opInferLenTopo defs)
+  anns <- either (throwError . OpErrAnno) pure (opAnnoLenTopo defs infs)
+  root <- maybe (throwError (OpErrRoot n)) pure (Map.lookup n anns)
+  arr <- liftIO $ execOpM anns (memoKey root) (goOpToWave root)
+  pure (isampsToWave (InternalSamples arr))
+
+opToWave :: (Ord n) => n -> Op n -> IO (Either (OpErr n) WAVESamples)
+opToWave n op = opsToWave (Map.singleton n op) n
