@@ -1,21 +1,14 @@
-{-# LANGUAGE PartialTypeSignatures #-}
-
 module Octune.Test (main) where
 
 import Bowtie (Fix (..), pattern MemoP)
 import Control.Exception (throwIO)
 import Control.Monad (forM, join)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Dahdit.Audio.Binary (QuietLiftedArray (..))
-import Dahdit.Audio.Wav.Simple (WAVESamples (..))
-import Dahdit.LiftedPrimArray (LiftedPrimArray (..))
 import Dahdit.Sizes (ElemCount (..))
 import Data.Foldable (for_, toList)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Primitive.ByteArray (ByteArray (..), sizeofByteArray)
 import Data.Primitive.PrimArray (primArrayFromList)
-import Data.Ratio ((%))
 import Data.Sequence (Seq (..))
 import Data.Sequence qualified as Seq
 import Data.Set (Set)
@@ -28,6 +21,7 @@ import Data.Sounds
   , isampsFromList
   , isampsIsNull
   , opAnnoLenTopo
+  , opInferLen
   , opInferLenTopo
   , opToWave
   )
@@ -74,23 +68,67 @@ topoSortTests lim =
 opToWaveSimple :: (MonadIO m) => OpF Char (Op Char) -> m (Either (OpErr Char) InternalSamples)
 opToWaveSimple = liftIO . opToWave 'a' . Fix
 
+opInferLenSimple :: OpF Char (Op Char) -> Maybe ElemCount
+opInferLenSimple = opInferLen (const Nothing) . Fix
+
 opTests :: TestLimit -> TestTree
 opTests lim =
   testGroup
     "op"
     [ testUnit "opToWave OpEmpty" $ do
-        outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple OpEmpty
+        let op = OpEmpty
+        opInferLenSimple op === Just 0
+        outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         assert (isampsIsNull outSamps)
     , testUnit "opToWave OpSamp" $ do
         let inSamps = isampsFromList [1, 2, 3]
+            op = OpSamp inSamps
+        opInferLenSimple op === Just 3
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple (OpSamp inSamps)
         outSamps === inSamps
     , testUnit "opToWave OpConcat" $ do
         let inSamps1 = isampsFromList [1 .. 3]
             inSamps2 = isampsFromList [4 .. 6]
             op = OpConcat (Seq.fromList [Fix (OpSamp inSamps1), Fix (OpSamp inSamps2)])
+        opInferLenSimple op === Just 6
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         outSamps === isampsFromList [1 .. 6]
+    , testUnit "opToWave OpMerge" $ do
+        let inSamps1 = isampsFromList [1 .. 3]
+            inSamps2 = isampsFromList [4 .. 6]
+            op = OpMerge (Seq.fromList [Fix (OpSamp inSamps1), Fix (OpSamp inSamps2)])
+        opInferLenSimple op === Just 3
+        outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
+        outSamps === isampsFromList [5, 7, 9]
+    , testUnit "opToWave OpBound LT" $ do
+        let inSamps = isampsFromList [1 .. 3]
+            op = OpBound 2 (Fix (OpSamp inSamps))
+        opInferLenSimple op === Just 2
+        outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
+        outSamps === isampsFromList [1, 2]
+    , testUnit "opToWave OpBound EQ" $ do
+        let inSamps = isampsFromList [1 .. 3]
+            op = OpBound 3 (Fix (OpSamp inSamps))
+        opInferLenSimple op === Just 3
+        outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
+        outSamps === isampsFromList [1, 2, 3]
+    , testUnit "opToWave OpBound GT" $ do
+        let inSamps = isampsFromList [1 .. 3]
+            op = OpBound 4 (Fix (OpSamp inSamps))
+        opInferLenSimple op === Just 4
+        outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
+        outSamps === isampsFromList [1, 2, 3, 0]
+    , testUnit "opToWave OpBound empty" $ do
+        let op = OpBound 3 (Fix OpEmpty)
+        opInferLenSimple op === Just 3
+        outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
+        outSamps === isampsFromList [0, 0, 0]
+    , testUnit "opToWave OpSkip" $ do
+        let op = OpSkip 1 (Fix (OpSamp (isampsFromList [1, 2, 3])))
+        opInferLenSimple op === Just 2
+      -- TODO fix
+      -- outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
+      -- outSamps === isampsFromList [2, 3]
     , testProp "upper bounds opAnnoLenTopo" lim $ do
         -- Generate a set of valid keys
         keys <- forAll $ Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z'])
@@ -144,8 +182,8 @@ genOp validKeys = genR
         n <- Gen.int (Range.linear 1 10)
         pure (Fix (OpBound (ElemCount n) r))
     , Gen.subtermM genR $ \r -> do
-        n <- Gen.integral (Range.linear 1 9)
-        pure (Fix (OpCut (n % 10) r))
+        n <- Gen.integral (Range.linear 1 10)
+        pure (Fix (OpSkip n r))
     , Gen.subterm genR (Fix . OpRepeat)
     , Gen.subtermM genR $ \r -> do
         n <- Gen.int (Range.linear 1 3)

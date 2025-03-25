@@ -1,6 +1,6 @@
 module Data.Sounds where
 
-import Bowtie (Fix (..), Memo, memoCata, memoKey, pattern MemoP)
+import Bowtie (Fix (..), Memo, memoKey, pattern MemoP)
 import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, withMVar)
 import Control.DeepSeq (NFData (..))
 import Control.Exception (Exception)
@@ -10,7 +10,7 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Par (IVar, InclusiveRange (..), parFor)
 import Control.Monad.Par.Class qualified as Par
 import Control.Monad.Primitive (PrimMonad (..), RealWorld)
-import Control.Monad.Reader (Reader, ReaderT (..), ask, asks, local)
+import Control.Monad.Reader (ReaderT (..), ask, asks, local)
 import Control.Monad.State.Strict (State, StateT, execStateT, gets, modify', runState)
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
@@ -262,10 +262,10 @@ dumpAllSamples = do
 data OpF n r
   = OpEmpty
   | OpSamp !InternalSamples
-  | -- | Invariant: length is in (0, inf)
+  | -- | Invariant: length in (0, inf)
     OpBound !ElemCount r
-  | -- | Invariant: fraction in (0, 1)
-    OpCut !Rational r
+  | -- | Invariant: length in (0, inf)
+    OpSkip !ElemCount r
   | OpRepeat r
   | -- | Invariant: repetitions in (0, inf)
     OpReplicate !Int r
@@ -286,7 +286,7 @@ opInferLenF onRef = \case
   OpEmpty -> Just 0
   OpSamp s -> Just (isampsLength s)
   OpBound l _ -> Just l
-  OpCut _ r -> r
+  OpSkip l r -> fmap (max 0 . subtract l) r
   OpRepeat _ -> Nothing
   OpReplicate n r -> fmap (fromIntegral n *) r
   OpConcat rs -> fmap sum (sequence rs)
@@ -306,6 +306,7 @@ opInferLenTopo m = topoEval opRefs m opInferLen
 data Op2F n r
   = Op2Empty
   | Op2Samp !InternalSamples
+  | Op2Skip !ElemCount r
   | Op2Replicate !Int r
   | Op2Concat !(Seq r)
   | Op2Merge !(Seq r)
@@ -336,11 +337,13 @@ opAnnoLen i (Fix opf) = case opf of
     r' <- opAnnoLen l r
     let MemoP ml f = r'
     pure (MemoP l (if ml == l then f else Op2Concat (r' :<| Empty)))
-  OpCut x r -> do
-    let l = min i (floor (x * fromIntegral i))
-    r' <- opAnnoLen l r
-    let MemoP ml f = r'
-    pure (MemoP ml (if ml == l then f else Op2Concat (r' :<| Empty)))
+  OpSkip b r -> do
+    r' <- opAnnoLen i r
+    let MemoP ml _ = r'
+    pure $
+      if b >= ml
+        then MemoP 0 Op2Empty
+        else MemoP (ml - b) (Op2Skip b r')
   OpRepeat r -> do
     r' <- opAnnoLen i r
     let MemoP ml _ = r'
@@ -469,6 +472,17 @@ handleOpSamp clen (InternalSamples src) = do
   OpEnv _ _ off bufVar <- ask
   liftIO $ withMVar bufVar $ \b -> copyPrimArray b (unElemCount off) src 0 (unElemCount clen)
 
+-- TODO pass start offset recursively to avoid generating useless prefix
+handleOpSkip :: (Ord n) => ElemCount -> ElemCount -> Op2Anno ElemCount n -> OpM n ()
+handleOpSkip clen k r = do
+  let rlen = memoKey r
+  tmp <- liftIO (zeroPrimArray (unElemCount rlen))
+  tmpVar <- liftIO (newMVar tmp)
+  local (\env -> env {oeOff = 0, oeBufVar = tmpVar}) (goOpToWave r)
+  OpEnv _ _ off bufVar <- ask
+  liftIO $ withMVar bufVar $ \b ->
+    copyMutablePrimArray b (unElemCount off) b (unElemCount k) (unElemCount clen)
+
 handleOpReplicate :: (Ord n) => ElemCount -> Int -> Op2Anno ElemCount n -> OpM n ()
 handleOpReplicate clen n r = do
   OpEnv _ _ off bufVar <- ask
@@ -520,6 +534,7 @@ goOpToWave :: (Ord n) => Op2Anno ElemCount n -> OpM n ()
 goOpToWave (MemoP clen f) = case f of
   Op2Empty -> pure ()
   Op2Samp s -> handleOpSamp clen s
+  Op2Skip b r -> handleOpSkip clen b r
   Op2Replicate n r -> handleOpReplicate clen n r
   Op2Concat rs -> handleOpConcat clen rs
   Op2Merge rs -> handleOpMerge clen rs
