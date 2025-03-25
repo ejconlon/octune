@@ -340,10 +340,9 @@ opAnnoLen i (Fix opf) = case opf of
   OpSkip b r -> do
     r' <- opAnnoLen i r
     let MemoP ml _ = r'
-    pure $
-      if b >= ml
-        then MemoP 0 Op2Empty
-        else MemoP (ml - b) (Op2Skip b r')
+    pure $ if b >= ml
+      then MemoP 0 Op2Empty
+      else MemoP (ml - b) (Op2Skip b r')
   OpRepeat r -> do
     r' <- opAnnoLen i r
     let MemoP ml _ = r'
@@ -473,7 +472,7 @@ handleOpSamp clen (InternalSamples src) = do
   liftIO $ withMVar bufVar $ \b -> copyPrimArray b (unElemCount off) src 0 (unElemCount clen)
 
 -- TODO pass start offset recursively to avoid generating useless prefix
-handleOpSkip :: (Ord n) => ElemCount -> ElemCount -> Op2Anno ElemCount n -> OpM n ()
+handleOpSkip :: Ord n => ElemCount -> ElemCount -> Op2Anno ElemCount n -> OpM n ()
 handleOpSkip clen k r = do
   let rlen = memoKey r
   tmp <- liftIO (zeroPrimArray (unElemCount rlen))
@@ -481,7 +480,7 @@ handleOpSkip clen k r = do
   local (\env -> env {oeOff = 0, oeBufVar = tmpVar}) (goOpToWave r)
   OpEnv _ _ off bufVar <- ask
   liftIO $ withMVar bufVar $ \b ->
-    copyMutablePrimArray b (unElemCount off) b (unElemCount k) (unElemCount clen)
+    copyMutablePrimArray b (unElemCount off) tmp (unElemCount k) (unElemCount clen)
 
 handleOpReplicate :: (Ord n) => ElemCount -> Int -> Op2Anno ElemCount n -> OpM n ()
 handleOpReplicate clen n r = do
@@ -544,7 +543,6 @@ data OpErr n
   = OpErrInfer !(TopoErr n)
   | OpErrAnno !(AnnoErr n)
   | OpErrRoot !n
-  | OpErrOverflow
   deriving stock (Eq, Ord, Show)
 
 instance (Show n, Typeable n) => Exception (OpErr n)
