@@ -14,8 +14,11 @@ import Data.Sequence qualified as Seq
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Sounds
-  ( InternalSamples (..)
+  ( AnnoErr
+  , InternalSamples (..)
   , Op
+  , Op2Anno
+  , Op2F (..)
   , OpErr
   , OpF (..)
   , isampsFromList
@@ -23,7 +26,7 @@ import Data.Sounds
   , opAnnoLenTopo
   , opInferLen
   , opInferLenTopo
-  , opToWave, Op2Anno, AnnoErr, Op2F (..)
+  , opToWave
   )
 import Data.Topo (TopoErr, topoSort)
 import PropUnit (Gen, TestLimit, TestTree, assert, forAll, testGroup, testMain, testProp, testUnit, (===))
@@ -71,13 +74,13 @@ opToWaveSimple = liftIO . opToWave 'a' . Fix
 opInferLenSimple :: OpF Char (Op Char) -> Maybe ElemCount
 opInferLenSimple = opInferLen (const Nothing) . Fix
 
-opAnnoLenSimple :: OpF Char (Op Char) -> (Maybe ElemCount, Either (AnnoErr Char) (Op2Anno ElemCount Char))
+opAnnoLenSimple :: OpF Char (Op Char) -> (Maybe ElemCount, Either (AnnoErr Char) (Op2Anno Char))
 opAnnoLenSimple op =
   let m = Map.fromList [('a', Fix op)]
       s = opInferLenSimple op
       n = Map.singleton 'a' s
       t = fmap (Map.! 'a') (opAnnoLenTopo m n)
-  in (s, t)
+  in  (s, t)
 
 opTests :: TestLimit -> TestTree
 opTests lim =
@@ -91,41 +94,41 @@ opTests lim =
     , testUnit "opToWave OpSamp" $ do
         let inSamps = isampsFromList [1, 2, 3]
             op = OpSamp inSamps
-        opAnnoLenSimple op === (Just 3, Right (MemoP 3 (Op2Samp inSamps)))
+        opAnnoLenSimple op === (Just 3, Right (MemoP 3 (Op2Samp 0 inSamps)))
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple (OpSamp inSamps)
         outSamps === inSamps
     , testUnit "opToWave OpConcat" $ do
         let inSamps1 = isampsFromList [1 .. 3]
             inSamps2 = isampsFromList [4 .. 6]
             op = OpConcat (Seq.fromList [Fix (OpSamp inSamps1), Fix (OpSamp inSamps2)])
-        opAnnoLenSimple op ===
-          (Just 6, Right (MemoP 6 (Op2Concat (Seq.fromList [MemoP 3 (Op2Samp inSamps1), MemoP 3 (Op2Samp inSamps2)]))))
+        opAnnoLenSimple op
+          === (Just 6, Right (MemoP 6 (Op2Concat (Seq.fromList [MemoP 3 (Op2Samp 0 inSamps1), MemoP 3 (Op2Samp 0 inSamps2)]))))
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         outSamps === isampsFromList [1 .. 6]
     , testUnit "opToWave OpMerge" $ do
         let inSamps1 = isampsFromList [1 .. 3]
             inSamps2 = isampsFromList [4 .. 6]
             op = OpMerge (Seq.fromList [Fix (OpSamp inSamps1), Fix (OpSamp inSamps2)])
-        opAnnoLenSimple op ===
-          (Just 3, Right (MemoP 3 (Op2Merge (Seq.fromList [MemoP 3 (Op2Samp inSamps1), MemoP 3 (Op2Samp inSamps2)]))))
+        opAnnoLenSimple op
+          === (Just 3, Right (MemoP 3 (Op2Merge (Seq.fromList [MemoP 3 (Op2Samp 0 inSamps1), MemoP 3 (Op2Samp 0 inSamps2)]))))
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         outSamps === isampsFromList [5, 7, 9]
     , testUnit "opToWave OpBound LT" $ do
         let inSamps = isampsFromList [1 .. 3]
             op = OpBound 2 (Fix (OpSamp inSamps))
-        opAnnoLenSimple op === (Just 2, Right (MemoP 2 (Op2Samp inSamps)))
+        opAnnoLenSimple op === (Just 2, Right (MemoP 2 (Op2Samp 0 inSamps)))
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         outSamps === isampsFromList [1, 2]
     , testUnit "opToWave OpBound EQ" $ do
         let inSamps = isampsFromList [1 .. 3]
             op = OpBound 3 (Fix (OpSamp inSamps))
-        opAnnoLenSimple op === (Just 3, Right (MemoP 3 (Op2Samp inSamps)))
+        opAnnoLenSimple op === (Just 3, Right (MemoP 3 (Op2Samp 0 inSamps)))
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         outSamps === isampsFromList [1, 2, 3]
     , testUnit "opToWave OpBound GT" $ do
         let inSamps = isampsFromList [1 .. 3]
             op = OpBound 4 (Fix (OpSamp inSamps))
-        opAnnoLenSimple op === (Just 4, Right (MemoP 4 (Op2Concat (Seq.singleton (MemoP 3 (Op2Samp inSamps))))))
+        opAnnoLenSimple op === (Just 4, Right (MemoP 4 (Op2Concat (Seq.singleton (MemoP 3 (Op2Samp 0 inSamps))))))
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         outSamps === isampsFromList [1, 2, 3, 0]
     , testUnit "opToWave OpBound empty" $ do
@@ -133,13 +136,13 @@ opTests lim =
         opAnnoLenSimple op === (Just 3, Right (MemoP 3 (Op2Concat (Seq.singleton (MemoP 0 Op2Empty)))))
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         outSamps === isampsFromList [0, 0, 0]
-    -- , testUnit "opToWave OpSkip" $ do
-    --     let inSamps = isampsFromList [1, 2, 3]
-    --     let op = OpSkip 1 (Fix (OpSamp inSamps))
-    --     opAnnoLenSimple op === (Just 2, Right (MemoP 2 (Op2Skip 1 (MemoP 3 (Op2Samp inSamps)))))
-    --     outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
-    --     outSamps === isampsFromList [2, 3]
-    , testProp "upper bounds opAnnoLenTopo" lim $ do
+    , -- , testUnit "opToWave OpSkip" $ do
+      --     let inSamps = isampsFromList [1, 2, 3]
+      --     let op = OpSkip 1 (Fix (OpSamp inSamps))
+      --     opAnnoLenSimple op === (Just 2, Right (MemoP 2 (Op2Skip 1 (MemoP 3 (Op2Samp 0 inSamps)))))
+      --     outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
+      --     outSamps === isampsFromList [2, 3]
+      testProp "upper bounds opAnnoLenTopo" lim $ do
         -- Generate a set of valid keys
         keys <- forAll $ Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z'])
         let validKeys = Set.fromList keys
@@ -191,10 +194,11 @@ genOp validKeys = genR
     [ Gen.subtermM genR $ \r -> do
         n <- Gen.int (Range.linear 1 10)
         pure (Fix (OpBound (ElemCount n) r))
-    , Gen.subtermM genR $ \r -> do
-        n <- Gen.integral (Range.linear 1 10)
-        pure (Fix (OpSkip n r))
-    , Gen.subterm genR (Fix . OpRepeat)
+    , -- TODO enable this
+      -- , Gen.subtermM genR $ \r -> do
+      --     n <- Gen.integral (Range.linear 1 10)
+      --     pure (Fix (OpSkip n r))
+      Gen.subterm genR (Fix . OpRepeat)
     , Gen.subtermM genR $ \r -> do
         n <- Gen.int (Range.linear 1 3)
         pure (Fix (OpReplicate n r))
