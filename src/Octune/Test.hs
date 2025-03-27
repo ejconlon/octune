@@ -103,7 +103,7 @@ opTests lim =
     , testUnit "opToWave OpSamp" $ do
         let inSamps = isampsFromList [1, 2, 3]
             op = OpSamp inSamps
-        opAnnoLenSimple op === (Just 3, Right (MemoP 3 (Op2Samp 0 inSamps)))
+        opAnnoLenSimple op === (Just 3, Right (MemoP 3 (Op2Samp (Extent 0 3) inSamps)))
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple (OpSamp inSamps)
         outSamps === inSamps
     , testUnit "opToWave OpConcat" $ do
@@ -111,7 +111,10 @@ opTests lim =
             inSamps2 = isampsFromList [4 .. 6]
             op = OpConcat (Seq.fromList [Fix (OpSamp inSamps1), Fix (OpSamp inSamps2)])
         opAnnoLenSimple op
-          === (Just 6, Right (MemoP 6 (Op2Concat (Seq.fromList [MemoP 3 (Op2Samp 0 inSamps1), MemoP 3 (Op2Samp 0 inSamps2)]))))
+          === ( Just 6
+              , Right
+                  (MemoP 6 (Op2Concat (Seq.fromList [MemoP 3 (Op2Samp (Extent 0 3) inSamps1), MemoP 3 (Op2Samp (Extent 0 3) inSamps2)])))
+              )
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         outSamps === isampsFromList [1 .. 6]
     , testUnit "opToWave OpConcat with offset in middle" $ do
@@ -120,38 +123,70 @@ opTests lim =
             inSamps3 = isampsFromList [7 .. 9]
             op = OpConcat (Seq.fromList [Fix (OpSamp inSamps1), Fix (OpSamp inSamps2), Fix (OpSamp inSamps3)])
         opAnnoLenExtent (Extent 4 5) op
-          === (Just 9, Right (MemoP 5 (Op2Concat (Seq.fromList [MemoP 2 (Op2Samp 1 inSamps2), MemoP 3 (Op2Samp 0 inSamps3)]))))
+          === ( Just 9
+              , Right
+                  (MemoP 5 (Op2Concat (Seq.fromList [MemoP 2 (Op2Samp (Extent 1 2) inSamps2), MemoP 3 (Op2Samp (Extent 0 3) inSamps3)])))
+              )
     , testUnit "opToWave OpConcat with offset at boundary" $ do
         let inSamps1 = isampsFromList [1 .. 3]
             inSamps2 = isampsFromList [4 .. 6]
             inSamps3 = isampsFromList [7 .. 9]
             op = OpConcat (Seq.fromList [Fix (OpSamp inSamps1), Fix (OpSamp inSamps2), Fix (OpSamp inSamps3)])
         opAnnoLenExtent (Extent 3 6) op
-          === (Just 9, Right (MemoP 6 (Op2Concat (Seq.fromList [MemoP 3 (Op2Samp 0 inSamps2), MemoP 3 (Op2Samp 0 inSamps3)]))))
+          === ( Just 9
+              , Right
+                  (MemoP 6 (Op2Concat (Seq.fromList [MemoP 3 (Op2Samp (Extent 0 3) inSamps2), MemoP 3 (Op2Samp (Extent 0 3) inSamps3)])))
+              )
+    , testUnit "opToWave OpReplicate" $ do
+        let inSamps = isampsFromList [1, 2, 3]
+            op = OpReplicate 3 (Fix (OpSamp inSamps))
+        opAnnoLenSimple op
+          === (Just 9, Right (MemoP 9 (Op2Replicate 3 (MemoP 3 (Op2Samp (Extent 0 3) inSamps)))))
+        outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
+        outSamps === isampsFromList [1, 2, 3, 1, 2, 3, 1, 2, 3]
+    , testUnit "opToWave OpReplicate partial" $ do
+        let inSamps = isampsFromList [1, 2, 3]
+            op = OpReplicate 3 (Fix (OpSamp inSamps))
+        opAnnoLenExtent (Extent 0 7) op
+          === ( Just 9
+              , Right
+                  ( MemoP
+                      7
+                      ( Op2Concat
+                          ( Seq.fromList [MemoP 6 (Op2Replicate 2 (MemoP 3 (Op2Samp (Extent 0 3) inSamps))), MemoP 1 (Op2Samp (Extent 0 1) inSamps)]
+                          )
+                      )
+                  )
+              )
+        outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple (OpBound 7 (Fix op))
+        outSamps === isampsFromList [1, 2, 3, 1, 2, 3, 1]
     , testUnit "opToWave OpMerge" $ do
         let inSamps1 = isampsFromList [1 .. 3]
             inSamps2 = isampsFromList [4 .. 6]
             op = OpMerge (Seq.fromList [Fix (OpSamp inSamps1), Fix (OpSamp inSamps2)])
         opAnnoLenSimple op
-          === (Just 3, Right (MemoP 3 (Op2Merge (Seq.fromList [MemoP 3 (Op2Samp 0 inSamps1), MemoP 3 (Op2Samp 0 inSamps2)]))))
+          === ( Just 3
+              , Right
+                  (MemoP 3 (Op2Merge (Seq.fromList [MemoP 3 (Op2Samp (Extent 0 3) inSamps1), MemoP 3 (Op2Samp (Extent 0 3) inSamps2)])))
+              )
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         outSamps === isampsFromList [5, 7, 9]
     , testUnit "opToWave OpBound LT" $ do
         let inSamps = isampsFromList [1 .. 3]
             op = OpBound 2 (Fix (OpSamp inSamps))
-        opAnnoLenSimple op === (Just 2, Right (MemoP 2 (Op2Samp 0 inSamps)))
+        opAnnoLenSimple op === (Just 2, Right (MemoP 2 (Op2Samp (Extent 0 2) inSamps)))
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         outSamps === isampsFromList [1, 2]
     , testUnit "opToWave OpBound EQ" $ do
         let inSamps = isampsFromList [1 .. 3]
             op = OpBound 3 (Fix (OpSamp inSamps))
-        opAnnoLenSimple op === (Just 3, Right (MemoP 3 (Op2Samp 0 inSamps)))
+        opAnnoLenSimple op === (Just 3, Right (MemoP 3 (Op2Samp (Extent 0 3) inSamps)))
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         outSamps === isampsFromList [1, 2, 3]
     , testUnit "opToWave OpBound GT" $ do
         let inSamps = isampsFromList [1 .. 3]
             op = OpBound 4 (Fix (OpSamp inSamps))
-        opAnnoLenSimple op === (Just 4, Right (MemoP 4 (Op2Concat (Seq.singleton (MemoP 3 (Op2Samp 0 inSamps))))))
+        opAnnoLenSimple op === (Just 4, Right (MemoP 4 (Op2Concat (Seq.singleton (MemoP 3 (Op2Samp (Extent 0 3) inSamps))))))
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         outSamps === isampsFromList [1, 2, 3, 0]
     , testUnit "opToWave OpBound empty" $ do

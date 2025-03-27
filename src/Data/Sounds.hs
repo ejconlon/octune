@@ -325,11 +325,11 @@ extNull (Extent _ l) = l <= 0
 
 data Op2F n r
   = Op2Empty
-  | Op2Samp !ElemCount !InternalSamples
+  | Op2Samp !Extent !InternalSamples
   | Op2Replicate !Int r
   | Op2Concat !(Seq r)
   | Op2Merge !(Seq r)
-  | Op2Ref !ElemCount !n
+  | Op2Ref !Extent !n
   deriving stock (Eq, Show, Functor)
 
 type Op2Anno n = Memo (Op2F n) ElemCount
@@ -369,7 +369,7 @@ opAnnoLen = go
     OpEmpty -> pure op2Empty
     OpSamp s ->
       let len' = min haveLen (isampsLength s - haveOff)
-      in  pure (MemoP len' (Op2Samp haveOff s))
+      in  pure (MemoP len' (Op2Samp (Extent haveOff len') s))
     OpBound include r -> do
       let len' = min haveLen include
       r' <- go (Extent haveOff len') r
@@ -399,10 +399,21 @@ opAnnoLen = go
     OpReplicate n r ->
       if haveOff == 0
         then do
-          let len = div haveLen (ElemCount n)
-          r' <- go (Extent 0 len) r
+          r' <- go (Extent 0 haveLen) r
           let MemoP len' _ = r'
-          pure (MemoP (len' * ElemCount n) (Op2Replicate n r'))
+          if len' <= 0
+            then pure op2Empty
+            else do
+              let n' = min n (unElemCount (div haveLen len'))
+                  f' = Op2Replicate n' r'
+                  m = haveLen - (len' * ElemCount n')
+                  q = MemoP (len' * ElemCount n') f'
+              if m > 0
+                then do
+                  q' <- go (Extent 0 m) r
+                  let MemoP len'' _ = q'
+                  pure (MemoP (len' * ElemCount n' + len'') (Op2Concat (q :<| q' :<| Empty)))
+                else pure q
         else error "TODO"
     OpConcat rs -> do
       let g !tot !qs = \case
@@ -448,7 +459,7 @@ opAnnoLen = go
       len' <- case mx of
         Just x -> pure (max 0 (min x (haveLen + haveOff) - haveOff))
         Nothing -> haveLen <$ modify' (Map.alter (Just . maybe haveExt (<> haveExt)) n)
-      pure (MemoP len' (Op2Ref haveOff n))
+      pure (MemoP len' (Op2Ref (Extent haveOff len') n))
 
 data AnnoErr n
   = AnnoErrTopo !(TopoErr n)
@@ -533,17 +544,18 @@ handleOpSamp coff clen (InternalSamples src) = do
   OpEnv _ _ off bufVar <- ask
   liftIO $ withMVar bufVar $ \b -> copyPrimArray b (unElemCount off) src (unElemCount coff) (unElemCount clen)
 
-handleOpReplicate :: (Ord n) => ElemCount -> Int -> Op2Anno n -> OpM n ()
-handleOpReplicate clen n r = do
+handleOpReplicate :: (Ord n) => Int -> Op2Anno n -> OpM n ()
+handleOpReplicate n r = do
   OpEnv _ _ off bufVar <- ask
+  let MemoP rlen _ = r
   goOpToWave r
   liftIO $ withMVar bufVar $ \b -> do
     for_ [1 .. n - 1] $ \i -> do
-      let off' = off + ElemCount i * clen
-      copyMutablePrimArray b (unElemCount off') b (unElemCount off) (unElemCount clen)
+      let off' = off + ElemCount i * rlen
+      copyMutablePrimArray b (unElemCount off') b (unElemCount off) (unElemCount rlen)
 
-handleOpConcat :: (Ord n) => ElemCount -> Seq (Op2Anno n) -> OpM n ()
-handleOpConcat _ rs = do
+handleOpConcat :: (Ord n) => Seq (Op2Anno n) -> OpM n ()
+handleOpConcat rs = do
   off <- asks oeOff
   parFor (InclusiveRange 0 (length rs - 1)) $ \i -> do
     let r = Seq.index rs i
@@ -551,8 +563,8 @@ handleOpConcat _ rs = do
         off' = off + elemOff
     local (\env -> env {oeOff = off'}) (goOpToWave r)
 
-handleOpMerge :: (Ord n) => ElemCount -> Seq (Op2Anno n) -> OpM n ()
-handleOpMerge _ rs = do
+handleOpMerge :: (Ord n) => Seq (Op2Anno n) -> OpM n ()
+handleOpMerge rs = do
   parFor (InclusiveRange 0 (length rs - 1)) $ \i -> do
     let r = Seq.index rs i
         rlen = memoKey r
@@ -583,11 +595,11 @@ handleOpRef _coff clen n = do
 goOpToWave :: (Ord n) => Op2Anno n -> OpM n ()
 goOpToWave (MemoP clen f) = case f of
   Op2Empty -> pure ()
-  Op2Samp coff s -> handleOpSamp coff clen s
-  Op2Replicate n r -> handleOpReplicate clen n r
-  Op2Concat rs -> handleOpConcat clen rs
-  Op2Merge rs -> handleOpMerge clen rs
-  Op2Ref coff n -> handleOpRef coff clen n
+  Op2Samp (Extent coff _) s -> handleOpSamp coff clen s
+  Op2Replicate n r -> handleOpReplicate n r
+  Op2Concat rs -> handleOpConcat rs
+  Op2Merge rs -> handleOpMerge rs
+  Op2Ref (Extent coff _) n -> handleOpRef coff clen n
 
 data OpErr n
   = OpErrInfer !(TopoErr n)
