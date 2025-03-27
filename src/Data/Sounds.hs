@@ -405,20 +405,36 @@ opAnnoLen = go
           pure (MemoP (len' * ElemCount n) (Op2Replicate n r'))
         else error "TODO"
     OpConcat rs -> do
+      let g !tot !qs = \case
+            Empty -> pure (MemoP tot (Op2Concat qs))
+            p :<| ps -> do
+              let left = haveLen - tot
+              if left > 0
+                then do
+                  q <- go (Extent 0 left) p
+                  let MemoP len _ = q
+                  g (tot + len) (qs :|> q) ps
+                else pure (MemoP tot (Op2Concat qs))
       if haveOff == 0
-        then
-          let g !tot !qs = \case
-                Empty -> pure (MemoP tot (Op2Concat qs))
+        then g 0 Empty rs
+        else do
+          -- Find the subtree containing our offset
+          let findOffset !tot = \case
+                Empty -> pure (0, Nothing, Empty)
                 p :<| ps -> do
-                  let left = haveLen - tot
-                  if left > 0
-                    then do
-                      q <- go (Extent 0 left) p
-                      let MemoP len _ = q
-                      g (tot + len) (qs :|> q) ps
-                    else pure (MemoP tot (Op2Concat qs))
-          in  g 0 Empty rs
-        else error "TODO"
+                  -- Calculate length of subtree without offset
+                  q <- go (Extent 0 (haveLen + haveOff - tot)) p
+                  let MemoP len _ = q
+                  if tot + len <= haveOff
+                    then findOffset (tot + len) ps
+                    else do
+                      -- Found the subtree containing our offset
+                      let subOffset = haveOff - tot
+                      q' <- go (Extent subOffset haveLen) p
+                      let MemoP len' _ = q'
+                      pure (len', Just q', ps)
+          (tot, partial, rest) <- findOffset 0 rs
+          g tot (maybe Empty Seq.singleton partial) rest
     OpMerge rs -> do
       ps <- fmap (Seq.filter (not . op2Null)) (traverse (go haveExt) rs)
       case ps of
@@ -430,7 +446,7 @@ opAnnoLen = go
     OpRef n -> do
       mx <- asks (join . Map.lookup n)
       len' <- case mx of
-        Just x -> pure (min x (haveLen + haveOff) - haveOff)
+        Just x -> pure (max 0 (min x (haveLen + haveOff) - haveOff))
         Nothing -> haveLen <$ modify' (Map.alter (Just . maybe haveExt (<> haveExt)) n)
       pure (MemoP len' (Op2Ref haveOff n))
 

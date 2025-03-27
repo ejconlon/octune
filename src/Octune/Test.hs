@@ -15,6 +15,7 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Sounds
   ( AnnoErr
+  , Extent (..)
   , InternalSamples (..)
   , Op
   , Op2Anno
@@ -23,10 +24,12 @@ import Data.Sounds
   , OpF (..)
   , isampsFromList
   , isampsIsNull
+  , opAnnoLen
   , opAnnoLenTopo
   , opInferLen
   , opInferLenTopo
   , opToWave
+  , runLenM
   )
 import Data.Topo (TopoErr, topoSort)
 import PropUnit (Gen, TestLimit, TestTree, assert, forAll, testGroup, testMain, testProp, testUnit, (===))
@@ -82,6 +85,12 @@ opAnnoLenSimple op =
       t = fmap (Map.! 'a') (opAnnoLenTopo m n)
   in  (s, t)
 
+opAnnoLenExtent :: Extent -> OpF Char (Op Char) -> (Maybe ElemCount, Either (AnnoErr Char) (Op2Anno Char))
+opAnnoLenExtent (Extent off len) op =
+  let s = opInferLenSimple op
+      t = fst (runLenM Map.empty Map.empty (opAnnoLen (Extent off (maybe len (max 0 . min len) s)) (Fix op)))
+  in  (s, Right t)
+
 opTests :: TestLimit -> TestTree
 opTests lim =
   testGroup
@@ -105,6 +114,20 @@ opTests lim =
           === (Just 6, Right (MemoP 6 (Op2Concat (Seq.fromList [MemoP 3 (Op2Samp 0 inSamps1), MemoP 3 (Op2Samp 0 inSamps2)]))))
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         outSamps === isampsFromList [1 .. 6]
+    , testUnit "opToWave OpConcat with offset in middle" $ do
+        let inSamps1 = isampsFromList [1 .. 3]
+            inSamps2 = isampsFromList [4 .. 6]
+            inSamps3 = isampsFromList [7 .. 9]
+            op = OpConcat (Seq.fromList [Fix (OpSamp inSamps1), Fix (OpSamp inSamps2), Fix (OpSamp inSamps3)])
+        opAnnoLenExtent (Extent 4 5) op
+          === (Just 9, Right (MemoP 5 (Op2Concat (Seq.fromList [MemoP 2 (Op2Samp 1 inSamps2), MemoP 3 (Op2Samp 0 inSamps3)]))))
+    , testUnit "opToWave OpConcat with offset at boundary" $ do
+        let inSamps1 = isampsFromList [1 .. 3]
+            inSamps2 = isampsFromList [4 .. 6]
+            inSamps3 = isampsFromList [7 .. 9]
+            op = OpConcat (Seq.fromList [Fix (OpSamp inSamps1), Fix (OpSamp inSamps2), Fix (OpSamp inSamps3)])
+        opAnnoLenExtent (Extent 3 6) op
+          === (Just 9, Right (MemoP 6 (Op2Concat (Seq.fromList [MemoP 3 (Op2Samp 0 inSamps2), MemoP 3 (Op2Samp 0 inSamps3)]))))
     , testUnit "opToWave OpMerge" $ do
         let inSamps1 = isampsFromList [1 .. 3]
             inSamps2 = isampsFromList [4 .. 6]
