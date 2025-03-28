@@ -381,20 +381,21 @@ opAnnoLen = go
     OpRepeat r ->
       if haveOff == 0
         then do
-          r' <- go haveExt r
-          let MemoP len _ = r'
-          if len <= 0
+          r' <- go (Extent 0 haveLen) r
+          let MemoP len' _ = r'
+          if len' <= 0
             then pure op2Empty
             else do
-              let (n, m) = divMod haveLen len
-                  f' = Op2Replicate (unElemCount n) r'
-              if m == 0
-                then pure (MemoP haveLen f')
-                else do
-                  let q = MemoP (len * n) f'
+              let n' = unElemCount (div haveLen len')
+                  f' = Op2Replicate n' r'
+                  m = haveLen - (len' * ElemCount n')
+                  q = MemoP (len' * ElemCount n') f'
+              if m > 0
+                then do
                   q' <- go (Extent 0 m) r
-                  let MemoP len' _ = q'
-                  pure (MemoP (len * n + len') (Op2Concat (q :<| q' :<| Empty)))
+                  let MemoP len'' _ = q'
+                  pure (MemoP (len' * ElemCount n' + len'') (Op2Concat (q :<| q' :<| Empty)))
+                else pure q
         else error "TODO"
     OpReplicate n r ->
       if haveOff == 0

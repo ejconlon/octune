@@ -194,13 +194,30 @@ opTests lim =
         opAnnoLenSimple op === (Just 3, Right (MemoP 3 (Op2Concat (Seq.singleton (MemoP 0 Op2Empty)))))
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
         outSamps === isampsFromList [0, 0, 0]
-    , -- , testUnit "opToWave OpSkip" $ do
-      --     let inSamps = isampsFromList [1, 2, 3]
-      --     let op = OpSkip 1 (Fix (OpSamp inSamps))
-      --     opAnnoLenSimple op === (Just 2, Right (MemoP 2 (Op2Skip 1 (MemoP 3 (Op2Samp 0 inSamps)))))
-      --     outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
-      --     outSamps === isampsFromList [2, 3]
-      testProp "upper bounds opAnnoLenTopo" lim $ do
+    , testUnit "opToWave OpRepeat" $ do
+        let inSamps = isampsFromList [1, 2, 3]
+            op = OpBound 9 (Fix (OpRepeat (Fix (OpSamp inSamps))))
+        opAnnoLenSimple op
+          === (Just 9, Right (MemoP 9 (Op2Replicate 3 (MemoP 3 (Op2Samp (Extent 0 3) inSamps)))))
+        outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple op
+        outSamps === isampsFromList [1, 2, 3, 1, 2, 3, 1, 2, 3]
+    , testUnit "opToWave OpRepeat partial" $ do
+        let inSamps = isampsFromList [1, 2, 3]
+            op = OpBound 9 (Fix (OpRepeat (Fix (OpSamp inSamps))))
+        opAnnoLenExtent (Extent 0 7) op
+          === ( Just 9
+              , Right
+                  ( MemoP
+                      7
+                      ( Op2Concat
+                          ( Seq.fromList [MemoP 6 (Op2Replicate 2 (MemoP 3 (Op2Samp (Extent 0 3) inSamps))), MemoP 1 (Op2Samp (Extent 0 1) inSamps)]
+                          )
+                      )
+                  )
+              )
+        outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple (OpBound 7 (Fix op))
+        outSamps === isampsFromList [1, 2, 3, 1, 2, 3, 1]
+    , testProp "upper bounds opAnnoLenTopo" lim $ do
         -- Generate a set of valid keys
         keys <- forAll $ Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z'])
         let validKeys = Set.fromList keys
