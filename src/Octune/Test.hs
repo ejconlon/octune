@@ -29,7 +29,7 @@ import Data.Sounds
   , opInferLen
   , opInferLenTopo
   , opToWave
-  , runLenM
+  , runLenM, op2Validate
   )
 import Data.Topo (TopoErr, topoSort)
 import PropUnit (Gen, TestLimit, TestTree, assert, forAll, testGroup, testMain, testProp, testUnit, (===))
@@ -242,9 +242,11 @@ opTests lim =
                       -- Get the annotated length
                       case Map.lookup k annotated of
                         Nothing -> fail "Missing annotation"
-                        Just (MemoP annLen _) -> do
+                        Just an@(MemoP annLen _) -> do
                           -- Inferred length should be >= annotated length
                           assert $ infLen >= annLen
+                          -- Op should pass validation
+                          op2Validate an === Right ()
     ]
 
 main :: IO ()

@@ -2,7 +2,7 @@ module Data.Sounds where
 
 import Bowtie (Fix (..), Memo, memoKey, pattern MemoP)
 import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, withMVar)
-import Control.DeepSeq (NFData (..))
+import Control.DeepSeq (NFData)
 import Control.Exception (Exception)
 import Control.Monad (join, unless, void, when, (>=>))
 import Control.Monad.Except (Except, runExcept, runExceptT, throwError)
@@ -16,7 +16,7 @@ import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
 import Dahdit.LiftedPrimArray (LiftedPrimArray (..))
 import Dahdit.Sizes (ByteCount (..), ElemCount (..))
-import Data.Foldable (fold, for_, toList)
+import Data.Foldable (fold, for_, toList, traverse_)
 import Data.Functor.Foldable (cata)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
@@ -138,9 +138,7 @@ i32ElemToByteCount = ByteCount . (`div` 4) . unElemCount
 
 newtype InternalSamples = InternalSamples {unInternalSamples :: PrimArray Int32}
   deriving stock (Eq, Show)
-
-instance NFData InternalSamples where
-  rnf = rnf . unInternalSamples
+  deriving newtype (NFData)
 
 isampsEmpty :: InternalSamples
 isampsEmpty = InternalSamples emptyPrimArray
@@ -330,7 +328,35 @@ data Op2F n r
   | Op2Concat !(Seq r)
   | Op2Merge !(Seq r)
   | Op2Ref !Extent !n
-  deriving stock (Eq, Show, Functor)
+  deriving stock (Eq, Show, Functor, Foldable, Traversable)
+
+data ValErr n
+  = ValErrChildLen !ElemCount !ElemCount -- ^ Expected length, actual sum of child lengths
+  | ValErrExtentLen !ElemCount !ElemCount -- ^ Expected length, actual extent length
+  | ValErrEmptyLen !ElemCount -- ^ Non-zero length for Op2Empty
+  deriving stock (Eq, Show)
+
+op2Validate :: Op2Anno n -> Either (ValErr n) ()
+op2Validate = runExcept . go where
+  go (MemoP totLen op) = case op of
+    Op2Empty ->
+      unless (totLen == 0) (throwError (ValErrEmptyLen totLen))
+    Op2Samp (Extent _ len) _ ->
+      unless (totLen == len) (throwError (ValErrExtentLen totLen len))
+    Op2Replicate n r -> do
+      go r
+      let childSum = memoKey r * ElemCount n
+      unless (childSum <= totLen) (throwError (ValErrChildLen totLen childSum))
+    Op2Concat rs -> do
+      traverse_ go rs
+      let childSum = sum (fmap memoKey rs)
+      unless (childSum <= totLen) (throwError (ValErrChildLen totLen childSum))
+    Op2Merge rs -> do
+      traverse_ go rs
+      let childSum = maximum (fmap memoKey rs)
+      unless (childSum <= totLen) (throwError (ValErrChildLen totLen childSum))
+    Op2Ref (Extent _ len) _ ->
+      unless (totLen == len) (throwError (ValErrExtentLen totLen len))
 
 type Op2Anno n = Memo (Op2F n) ElemCount
 
@@ -417,7 +443,7 @@ opAnnoLen = go
                 else pure q
         else error "TODO"
     OpConcat rs -> do
-      let g !tot !qs = \case
+      let process !tot !qs = \case
             Empty -> pure (MemoP tot (Op2Concat qs))
             p :<| ps -> do
               let left = haveLen - tot
@@ -425,10 +451,10 @@ opAnnoLen = go
                 then do
                   q <- go (Extent 0 left) p
                   let MemoP len _ = q
-                  g (tot + len) (qs :|> q) ps
+                  process (tot + len) (qs :|> q) ps
                 else pure (MemoP tot (Op2Concat qs))
       if haveOff == 0
-        then g 0 Empty rs
+        then process 0 Empty rs
         else do
           -- Find the subtree containing our offset
           let findOffset !tot = \case
@@ -446,7 +472,7 @@ opAnnoLen = go
                       let MemoP len' _ = q'
                       pure (len', Just q', ps)
           (tot, partial, rest) <- findOffset 0 rs
-          g tot (maybe Empty Seq.singleton partial) rest
+          process tot (maybe Empty Seq.singleton partial) rest
     OpMerge rs -> do
       ps <- fmap (Seq.filter (not . op2Null)) (traverse (go haveExt) rs)
       case ps of
