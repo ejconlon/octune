@@ -428,40 +428,50 @@ opAnnoLen = go
       let len' = max 0 (haveLen - exclude)
       in  go (Extent (haveOff + exclude) len') r
     OpRepeat r -> do
-      r' <- go (Extent 0 haveLen) r
+      r' <- go (Extent 0 (haveLen + haveOff)) r
       let MemoP len' _ = r'
       if len' <= 0
         then pure op2Empty
         else do
-          let n' = min (unElemCount (div haveLen len')) (unElemCount (div haveLen len'))
-              f' = Op2Replicate n' r'
-              m = haveLen - (len' * ElemCount n')
-              q = MemoP (len' * ElemCount n') f'
-          if m > 0
-            then do
-              q' <- go (Extent 0 m) r
-              let MemoP len'' _ = q'
-              pure (MemoP (len' * ElemCount n' + len'') (Op2Concat (q :<| q' :<| Empty)))
-            else pure q
+          let preOff = mod haveOff len'
+              preLen = if preOff > 0 then len' - preOff else 0
+              (numBody, postLen) = divMod (haveLen - preLen) len'
+              bodyLen = len' * numBody
+              body = if bodyLen > 0 then Just (MemoP bodyLen (Op2Replicate (unElemCount numBody) r')) else Nothing
+          pre <-
+            if preLen > 0
+              then fmap (\x -> if op2Null x then Nothing else Just x) (go (Extent preOff preLen) r)
+              else pure Nothing
+          post <-
+            if postLen > 0
+              then fmap (\x -> if op2Null x then Nothing else Just x) (go (Extent 0 postLen) r)
+              else pure Nothing
+          let qs = maybe Empty Seq.singleton pre <> maybe Empty Seq.singleton body <> maybe Empty Seq.singleton post
+              qsLen = maybe 0 memoKey pre + bodyLen + maybe 0 memoKey post
+          case qs of
+            Empty -> pure op2Empty
+            q :<| Empty -> pure q
+            _ -> pure (MemoP qsLen (Op2Concat qs))
     OpReplicate n r -> do
       r' <- go (Extent 0 (haveLen + haveOff)) r
       let MemoP len' _ = r'
       if len' <= 0
         then pure op2Empty
         else do
-          let (ElemCount numOff, preLen) = divMod haveOff len'
-              numFull = unElemCount (div haveLen len')
-              numBody = max 0 (min n (numFull + numOff) - numOff)
+          let (ElemCount numPre, preOff) = divMod haveOff len'
+              preLen = if preOff > 0 then len' - preOff else 0
+              numFull = unElemCount (div (haveLen + haveOff) len')
+              numBody = min n numFull - numPre
               bodyLen = len' * ElemCount numBody
-              postLen = max 0 (haveLen - (preLen + bodyLen))
+              postLen = if numBody < n then haveLen - (preLen + bodyLen) else 0
               body = if bodyLen > 0 then Just (MemoP bodyLen (Op2Replicate numBody r')) else Nothing
           pre <-
             if preLen > 0
-              then fmap Just (go (Extent haveOff preLen) r)
+              then fmap (\x -> if op2Null x then Nothing else Just x) (go (Extent preOff preLen) r)
               else pure Nothing
           post <-
             if postLen > 0
-              then fmap Just (go (Extent 0 postLen) r)
+              then fmap (\x -> if op2Null x then Nothing else Just x) (go (Extent 0 postLen) r)
               else pure Nothing
           let qs = maybe Empty Seq.singleton pre <> maybe Empty Seq.singleton body <> maybe Empty Seq.singleton post
               qsLen = maybe 0 memoKey pre + bodyLen + maybe 0 memoKey post

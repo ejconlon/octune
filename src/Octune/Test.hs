@@ -218,6 +218,26 @@ opTests lim =
               )
         outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple (OpBound 7 (Fix op))
         outSamps === isampsFromList [1, 2, 3, 1, 2, 3, 1]
+    , testUnit "opToWave OpRepeat with offset" $ do
+        let inSamps = isampsFromList [1, 2, 3]
+            op = OpBound 9 (Fix (OpRepeat (Fix (OpSamp inSamps))))
+        opAnnoLenExtent (Extent 4 5) op
+          === ( Just 9
+              , Right
+                  ( MemoP
+                      5
+                      ( Op2Concat
+                          ( Seq.fromList
+                              [ MemoP 2 (Op2Samp (Extent 1 2) inSamps)
+                              , MemoP 3 (Op2Replicate 1 (MemoP 3 (Op2Samp (Extent 0 3) inSamps)))
+                              ]
+                          )
+                      )
+                  )
+              )
+        -- TODO fix
+        -- outSamps <- either (liftIO . throwIO) pure =<< opToWaveSimple (OpSkip 4 (Fix op))
+        -- outSamps === isampsFromList [2, 3, 1, 2, 3]
     , testProp "upper bounds opAnnoLenTopo" lim $ do
         -- Generate a set of valid keys
         keys <- forAll $ Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z'])
