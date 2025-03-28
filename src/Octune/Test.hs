@@ -24,12 +24,13 @@ import Data.Sounds
   , OpF (..)
   , isampsFromList
   , isampsIsNull
+  , op2Validate
   , opAnnoLen
   , opAnnoLenTopo
   , opInferLen
   , opInferLenTopo
   , opToWave
-  , runLenM, op2Validate
+  , runLenM
   )
 import Data.Topo (TopoErr, topoSort)
 import PropUnit (Gen, TestLimit, TestTree, assert, forAll, testGroup, testMain, testProp, testUnit, (===))
@@ -246,7 +247,7 @@ opTests lim =
                           -- Inferred length should be >= annotated length
                           assert $ infLen >= annLen
                           -- Op should pass validation
-                          op2Validate an === Right ()
+                          op2Validate (`Set.member` validKeys) an === Right ()
     ]
 
 main :: IO ()

@@ -331,32 +331,55 @@ data Op2F n r
   deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
 data ValErr n
-  = ValErrChildLen !ElemCount !ElemCount -- ^ Expected length, actual sum of child lengths
-  | ValErrExtentLen !ElemCount !ElemCount -- ^ Expected length, actual extent length
-  | ValErrEmptyLen !ElemCount -- ^ Non-zero length for Op2Empty
+  = -- | Expected length, actual sum of child lengths
+    ValErrChildLen !ElemCount !ElemCount
+  | -- | Expected length, actual extent length
+    ValErrExtentLen !ElemCount !ElemCount
+  | -- | Non-zero length for Op2Empty
+    ValErrEmptyLen !ElemCount
+  | -- | Negative offset in extent
+    ValErrNegativeExtentOffset !ElemCount
+  | -- | Negative length in extent
+    ValErrNegativeExtentLength !ElemCount
+  | -- | Non-positive number of repetitions
+    ValErrNonPositiveReps !Int
+  | -- | No children in Op2Concat or Op2Merge
+    ValErrNoChildren
+  | -- | Reference not found
+    ValErrRef !n
   deriving stock (Eq, Show)
 
-op2Validate :: Op2Anno n -> Either (ValErr n) ()
-op2Validate = runExcept . go where
+op2Validate :: (n -> Bool) -> Op2Anno n -> Either (ValErr n) ()
+op2Validate onRef = runExcept . go
+ where
   go (MemoP totLen op) = case op of
     Op2Empty ->
-      unless (totLen == 0) (throwError (ValErrEmptyLen totLen))
-    Op2Samp (Extent _ len) _ ->
-      unless (totLen == len) (throwError (ValErrExtentLen totLen len))
+      unless (totLen == 0) $ throwError (ValErrEmptyLen totLen)
+    Op2Samp (Extent off len) _ -> do
+      unless (off >= 0) $ throwError (ValErrNegativeExtentOffset off)
+      unless (len >= 0) $ throwError (ValErrNegativeExtentLength len)
+      unless (totLen == len) $ throwError (ValErrExtentLen totLen len)
     Op2Replicate n r -> do
       go r
-      let childSum = memoKey r * ElemCount n
-      unless (childSum <= totLen) (throwError (ValErrChildLen totLen childSum))
+      unless (n > 0) $ throwError (ValErrNonPositiveReps n)
+      let MemoP rLen _ = r
+          childSum = rLen * ElemCount n
+      unless (childSum <= totLen) $ throwError (ValErrChildLen totLen childSum)
     Op2Concat rs -> do
       traverse_ go rs
+      when (Seq.null rs) $ throwError ValErrNoChildren
       let childSum = sum (fmap memoKey rs)
-      unless (childSum <= totLen) (throwError (ValErrChildLen totLen childSum))
+      unless (childSum <= totLen) $ throwError (ValErrChildLen totLen childSum)
     Op2Merge rs -> do
       traverse_ go rs
+      when (Seq.null rs) $ throwError ValErrNoChildren
       let childSum = maximum (fmap memoKey rs)
-      unless (childSum <= totLen) (throwError (ValErrChildLen totLen childSum))
-    Op2Ref (Extent _ len) _ ->
-      unless (totLen == len) (throwError (ValErrExtentLen totLen len))
+      unless (childSum <= totLen) $ throwError (ValErrChildLen totLen childSum)
+    Op2Ref (Extent off len) n -> do
+      unless (off >= 0) $ throwError (ValErrNegativeExtentOffset off)
+      unless (len >= 0) $ throwError (ValErrNegativeExtentLength len)
+      unless (totLen == len) $ throwError (ValErrExtentLen totLen len)
+      unless (onRef n) $ throwError (ValErrRef n)
 
 type Op2Anno n = Memo (Op2F n) ElemCount
 
