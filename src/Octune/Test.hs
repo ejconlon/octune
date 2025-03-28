@@ -272,11 +272,10 @@ genOp validKeys = genR
     [ Gen.subtermM genR $ \r -> do
         n <- Gen.int (Range.linear 1 10)
         pure (Fix (OpBound (ElemCount n) r))
-    , -- TODO enable this
-      -- , Gen.subtermM genR $ \r -> do
-      --     n <- Gen.integral (Range.linear 1 10)
-      --     pure (Fix (OpSkip n r))
-      Gen.subterm genR (Fix . OpRepeat)
+    , Gen.subtermM genR $ \r -> do
+        n <- Gen.integral (Range.linear 1 10)
+        pure (Fix (OpSkip n r))
+    , Gen.subterm genR (Fix . OpRepeat)
     , Gen.subtermM genR $ \r -> do
         n <- Gen.int (Range.linear 1 3)
         pure (Fix (OpReplicate n r))

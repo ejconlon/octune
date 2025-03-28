@@ -427,44 +427,48 @@ opAnnoLen = go
     OpSkip exclude r ->
       let len' = max 0 (haveLen - exclude)
       in  go (Extent (haveOff + exclude) len') r
-    OpRepeat r ->
-      if haveOff == 0
-        then do
-          r' <- go (Extent 0 haveLen) r
-          let MemoP len' _ = r'
-          if len' <= 0
-            then pure op2Empty
-            else do
-              let n' = unElemCount (div haveLen len')
-                  f' = Op2Replicate n' r'
-                  m = haveLen - (len' * ElemCount n')
-                  q = MemoP (len' * ElemCount n') f'
-              if m > 0
-                then do
-                  q' <- go (Extent 0 m) r
-                  let MemoP len'' _ = q'
-                  pure (MemoP (len' * ElemCount n' + len'') (Op2Concat (q :<| q' :<| Empty)))
-                else pure q
-        else error "TODO"
-    OpReplicate n r ->
-      if haveOff == 0
-        then do
-          r' <- go (Extent 0 haveLen) r
-          let MemoP len' _ = r'
-          if len' <= 0
-            then pure op2Empty
-            else do
-              let n' = min n (unElemCount (div haveLen len'))
-                  f' = Op2Replicate n' r'
-                  m = haveLen - (len' * ElemCount n')
-                  q = MemoP (len' * ElemCount n') f'
-              if m > 0
-                then do
-                  q' <- go (Extent 0 m) r
-                  let MemoP len'' _ = q'
-                  pure (MemoP (len' * ElemCount n' + len'') (Op2Concat (q :<| q' :<| Empty)))
-                else pure q
-        else error "TODO"
+    OpRepeat r -> do
+      r' <- go (Extent 0 haveLen) r
+      let MemoP len' _ = r'
+      if len' <= 0
+        then pure op2Empty
+        else do
+          let n' = min (unElemCount (div haveLen len')) (unElemCount (div haveLen len'))
+              f' = Op2Replicate n' r'
+              m = haveLen - (len' * ElemCount n')
+              q = MemoP (len' * ElemCount n') f'
+          if m > 0
+            then do
+              q' <- go (Extent 0 m) r
+              let MemoP len'' _ = q'
+              pure (MemoP (len' * ElemCount n' + len'') (Op2Concat (q :<| q' :<| Empty)))
+            else pure q
+    OpReplicate n r -> do
+      r' <- go (Extent 0 (haveLen + haveOff)) r
+      let MemoP len' _ = r'
+      if len' <= 0
+        then pure op2Empty
+        else do
+          let (ElemCount numOff, preLen) = divMod haveOff len'
+              numFull = unElemCount (div haveLen len')
+              numBody = max 0 (min n (numFull + numOff) - numOff)
+              bodyLen = len' * ElemCount numBody
+              postLen = max 0 (haveLen - (preLen + bodyLen))
+              body = if bodyLen > 0 then Just (MemoP bodyLen (Op2Replicate numBody r')) else Nothing
+          pre <-
+            if preLen > 0
+              then fmap Just (go (Extent haveOff preLen) r)
+              else pure Nothing
+          post <-
+            if postLen > 0
+              then fmap Just (go (Extent 0 postLen) r)
+              else pure Nothing
+          let qs = maybe Empty Seq.singleton pre <> maybe Empty Seq.singleton body <> maybe Empty Seq.singleton post
+              qsLen = maybe 0 memoKey pre + bodyLen + maybe 0 memoKey post
+          case qs of
+            Empty -> pure op2Empty
+            q :<| Empty -> pure q
+            _ -> pure (MemoP qsLen (Op2Concat qs))
     OpConcat rs -> do
       let process !tot !qs = \case
             Empty -> pure (MemoP tot (Op2Concat qs))
