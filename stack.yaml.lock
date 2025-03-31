@@ -59,15 +59,15 @@ packages:
   original:
     hackage: prop-unit-1.0.1
 - completed:
-    hackage: bowtie-0.5.0@sha256:d749ccd27bb2984ce03b545d2cfde44133de40fa8c49d971fc01f8b214a02ade,2080
+    hackage: bowtie-0.6.0@sha256:356fc3dc5e79c9b8560cae52adbc7e32841015af456d5b767feede997197ca18,2080
     pantry-tree:
-      sha256: 485af0c561d0dae96075602bad5802c8f62652ca9b936a87dbd1019cc8b9e61c
+      sha256: c81fb555563425560b4b17a486a21e183d046084457a60cb9349e01e5a9a0a1d
       size: 752
   original:
-    hackage: bowtie-0.5.0
+    hackage: bowtie-0.6.0
 snapshots:
 - completed:
-    sha256: 3020db98a5e35009543057d6e6b96890d285890fc97688933e1798da92c8bbde
-    size: 683815
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/23/15.yaml
-  original: lts-23.15
+    sha256: 2763632e4c4094ce12f5ae12b22f524cdc6453b6b19007ff164a37fd9d2ea829
+    size: 683819
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/23/17.yaml
+  original: lts-23.17

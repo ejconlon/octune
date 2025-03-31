@@ -1,7 +1,8 @@
 module Data.Topo
-  ( TopoErr (..)
+  ( SortErr (..)
   , topoSort
   , topoEval
+  , topoAnnoM
   )
 where
 
@@ -15,13 +16,15 @@ import Data.Sequence qualified as Seq
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Typeable (Typeable)
+import Data.Functor.Foldable (Base, Recursive (..))
+import Bowtie.Memo (Memo, mkMemoM, memoKey)
 
-data TopoErr k
-  = TopoErrLoop !k
-  | TopoErrMissing !k
+data SortErr k
+  = SortErrLoop !k
+  | SortErrMissing !k
   deriving stock (Eq, Ord, Show)
 
-instance (Show k, Typeable k) => Exception (TopoErr k)
+instance (Show k, Typeable k) => Exception (SortErr k)
 
 data SortDeps k = SortDeps !k !(Set k)
 
@@ -35,9 +38,9 @@ data SortSt k = SortSt
 initSortSt :: [k] -> SortSt k
 initSortSt = SortSt Set.empty Set.empty Empty . Seq.fromList
 
-type SortM k = StateT (SortSt k) (Except (TopoErr k))
+type SortM k = StateT (SortSt k) (Except (SortErr k))
 
-runSortM :: SortM k a -> SortSt k -> Either (TopoErr k) (a, SortSt k)
+runSortM :: SortM k a -> SortSt k -> Either (SortErr k) (a, SortSt k)
 runSortM m = runExcept . runStateT m
 
 topoSortNext :: (Ord k) => (k -> Maybe (Set k)) -> SortM k (Maybe k)
@@ -61,9 +64,9 @@ topoSortNext findRefs = goNext
       else do
         isDeferSeen <- gets (Set.member k . ssDeferSeen)
         if isDeferSeen
-          then throwError (TopoErrLoop k)
+          then throwError (SortErrLoop k)
           else case findRefs k of
-            Nothing -> throwError (TopoErrMissing k)
+            Nothing -> throwError (SortErrMissing k)
             Just refs -> do
               modify' $ \ss ->
                 let deps = Set.difference refs (ssOutSeen ss)
@@ -89,7 +92,7 @@ topoSortNext findRefs = goNext
               in  ss {ssDefer = defer''}
             goDefer k'
 
-topoSort :: (Ord k) => (k -> Maybe (Set k)) -> [k] -> Either (TopoErr k) (Seq k)
+topoSort :: (Ord k) => (k -> Maybe (Set k)) -> [k] -> Either (SortErr k) (Seq k)
 topoSort findRefs = fmap fst . runSortM (goGather Empty) . initSortSt
  where
   goGather !acc = do
@@ -98,7 +101,14 @@ topoSort findRefs = fmap fst . runSortM (goGather Empty) . initSortSt
       Nothing -> pure acc
       Just k -> goGather (acc :|> k)
 
-topoEval :: (Ord k) => (v -> Set k) -> Map k v -> ((k -> w) -> v -> w) -> Either (TopoErr k) (Map k w)
+-- data EvalErr k e =
+--     EvalErrSort !(SortErr k)
+--   | EvalErrEmbed !e
+--   deriving stock (Eq, Ord, Show)
+
+-- instance (Show k, Typeable k, Show e, Typeable e) => Exception (EvalErr k e)
+
+topoEval :: (Ord k) => (v -> Set k) -> Map k v -> ((k -> w) -> v -> w) -> Either (SortErr k) (Map k w)
 topoEval findValRefs m f = fmap (flip execState Map.empty . go) (topoSort findRefs (Map.keys m))
  where
   findRefs = fmap findValRefs . flip Map.lookup m
@@ -109,4 +119,35 @@ topoEval findValRefs m f = fmap (flip execState Map.empty . go) (topoSort findRe
         Nothing -> error "impossible"
         Just v -> do
           modify' (\c -> Map.insert k (f (c Map.!) v) c)
+          go ks
+
+-- topoEvalM :: (Monad m, Ord k) => (v -> Set k) -> Map k v -> ((k -> m w) -> v -> m w) -> m (Either (SortErr k) (Map k w))
+-- topoEvalM = undefined
+
+-- topoEvalE :: (Ord k) => (v -> Set k) -> Map k v -> ((k -> Either e w) -> v -> Either e w) -> Either (EvalErr k e) (Map k w)
+-- topoEvalE = undefined
+
+-- topoEvalEM :: (Monad m, Ord k) => (v -> Set k) -> Map k v -> ((k -> ExceptT e m w) -> v -> ExceptT e m w) -> m (Either (EvalErr k e) (Map k w))
+-- topoEvalEM = undefined
+
+-- topoAnno :: (Ord k, Base v ~ f, Traversable f) => (v -> Set k) -> Map k v -> ((k -> w) -> v -> w) -> Either (SortErr k) (Map k (Memo f w))
+-- topoAnno = undefined
+
+-- topoAnnoM :: (Monad m, Ord k, Base v ~ f, Traversable f) => (v -> Set k) -> Map k v -> ((k -> m w) -> v -> m w) -> m (Either (SortErr k) (Map k (Memo f w)))
+-- topoAnnoM = undefined
+
+topoAnnoM :: (Monad m, Ord k, Recursive v, Base v ~ f, Traversable f) => (v -> Set k) -> Map k v -> ((k -> m w) -> f w -> m w) -> Either (SortErr k) (Map k (m (Memo f w)))
+topoAnnoM findValRefs m f = fmap (flip execState Map.empty . go) (topoSort findRefs (Map.keys m))
+ where
+  findRefs = fmap findValRefs . flip Map.lookup m
+  go = \case
+    Empty -> pure ()
+    k :<| ks ->
+      case Map.lookup k m of
+        Nothing -> error "impossible"
+        Just v -> do
+          modify' $ \c ->
+            let g = f (fmap memoKey . (c Map.!))
+                x = mkMemoM g v
+            in Map.insert k x c
           go ks
