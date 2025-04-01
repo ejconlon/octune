@@ -278,7 +278,8 @@ newtype Time = Time {unTime :: Rational}
 newtype Delta = Delta {unDelta :: Rational}
   deriving stock (Eq, Show)
   deriving newtype (Num, Ord, Enum, Real, Fractional, RealFrac)
-  deriving (Semigroup, Monoid) via (Sum Rational)
+
+-- deriving (Semigroup, Monoid) via (Sum Rational)
 
 instance Measure Time Delta where
   measureDelta (Time t1) (Time t2) = Delta (t2 - t1)
@@ -334,7 +335,9 @@ arcNull :: (Measure t d) => Arc t -> Bool
 arcNull = (0 ==) . arcLen
 
 arcShift :: (Measure t d) => Arc t -> d -> Arc t
-arcShift (Arc s e) d = Arc (addDelta s d) (addDelta e d)
+arcShift (Arc s e) d =
+  let d' = negate d
+  in  Arc (addDelta s d') (addDelta e d')
 
 arcReps :: (Measure t d) => Arc t -> Reps -> Arc t
 arcReps (Arc s e) n = Arc s (addDelta s (mulReps n (measureDelta s e)))
@@ -372,6 +375,12 @@ newtype Extent = Extent {unExtent :: Arc Time}
 mkExtent :: Arc Time -> Extent
 mkExtent arc@(Arc s e) = Extent (if s >= e then Arc 0 0 else arc)
 
+extentFromDelta :: Delta -> Extent
+extentFromDelta = Extent . arcFrom 0
+
+extentEmpty :: Extent
+extentEmpty = Extent (Arc 0 0)
+
 extentPosArc :: Extent -> Maybe (Arc Time)
 extentPosArc (Extent (Arc s e)) =
   if s >= e || e <= 0
@@ -381,28 +390,49 @@ extentPosArc (Extent (Arc s e)) =
 extentLen :: Extent -> Delta
 extentLen = maybe 0 arcLen . extentPosArc
 
-instance Semigroup Extent where
-  ea@(Extent a) <> eb@(Extent b)
-    | arcNull a = eb
-    | arcNull b = ea
-    | otherwise = Extent (arcUnion a b)
+extentShift :: Extent -> Delta -> Extent
+extentShift (Extent arc) c = Extent (if arcNull arc then arc else arcShift arc c)
 
-instance Monoid Extent where
-  mempty = Extent (Arc 0 0)
+extentSlice :: Reps -> Arc Time -> Extent
+extentSlice n arc = mkExtent (arcFrom 0 (arcLen (arcReps arc n)))
+
+newtype ExtentMerge = ExtentMerge {unExtentMerge :: Extent}
+
+instance Semigroup ExtentMerge where
+  ExtentMerge (Extent a) <> ExtentMerge (Extent b) =
+    ExtentMerge (Extent (arcUnion a b))
+
+instance Monoid ExtentMerge where
+  mempty = ExtentMerge extentEmpty
+
+extentMerge :: (Foldable f) => f Extent -> Extent
+extentMerge = unExtentMerge . foldMap ExtentMerge
+
+newtype ExtentConcat = ExtentConcat {unExtentConcat :: Extent}
+
+instance Semigroup ExtentConcat where
+  ExtentConcat (Extent (Arc sa ea)) <> ExtentConcat (Extent (Arc sb eb)) =
+    ExtentConcat (Extent (Arc 0 (ea - sa + eb - sb)))
+
+instance Monoid ExtentConcat where
+  mempty = ExtentConcat extentEmpty
+
+extentConcat :: (Foldable f) => f Extent -> Extent
+extentConcat = unExtentConcat . foldMap ExtentConcat
 
 opInferExtentF :: (Monad m) => Rate -> (n -> m Extent) -> OpF n Extent -> m Extent
 opInferExtentF rate onRef = \case
-  OpEmpty -> pure mempty
+  OpEmpty -> pure extentEmpty
   OpSamp x ->
     let i = isampsLength x
     in  pure $
           if i == 0
-            then mempty
+            then extentEmpty
             else mkExtent (unquantize rate (Arc 0 i))
-  OpSlice n sarc _ -> pure (mkExtent (arcReps sarc n))
-  OpShift _ r -> pure r
-  OpConcat rs -> pure (fold rs)
-  OpMerge rs -> pure (maximum rs)
+  OpSlice n sarc _ -> pure (extentSlice n sarc)
+  OpShift c r -> pure (extentShift r c)
+  OpConcat rs -> pure (extentConcat rs)
+  OpMerge rs -> pure (extentMerge rs)
   OpRef n -> onRef n
 
 opInferExtent :: (Monad m) => Rate -> (n -> m Extent) -> Op n -> m Extent
@@ -443,13 +473,15 @@ opRender rate onRef = goTop
                 s' = max 0 s
                 e' = min i e
                 l = e - s
+                l' = e' - s'
             in  if s' >= i || e' <= 0 || s' >= e'
                   then isampsConstant l 0
                   else
                     let preSamps = isampsConstant (s' - s) 0
                         postSamps = isampsConstant (e - e') 0
-                        bodySamps = isampsTrim s' l x
-                    in  isampsConcat [preSamps, bodySamps, postSamps]
+                        bodySamps = isampsTrim s' l' x
+                        samps = [preSamps, bodySamps, postSamps]
+                    in  isampsConcat samps
     OpSlice n (Arc ss se) (Anno rext rsamp) ->
       let sarc' = Arc ss (min se (addDelta ss (extentLen rext)))
           sarcLen' = arcLen sarc'

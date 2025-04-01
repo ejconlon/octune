@@ -82,7 +82,7 @@ opTests lim =
             op = Fix (OpShift (Delta 2) inner :: TestOpF)
         -- TODO Annotate with extents for correct final length
         opAnnoExtentSingle (Rate 1) op
-          === Right (MemoP (Extent (Arc 0 3)) (OpShift (Delta 2) (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
+          === Right (MemoP (Extent (Arc (-2) 1)) (OpShift (Delta 2) (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
     , -- TODO fix this
       -- opRenderSimple (Rate 1) op === Right (isampsFromList [0, 0, 1, 2, 3])
       testUnit "opAnnoExtent OpSlice" $ do
@@ -90,7 +90,7 @@ opTests lim =
             inner = Fix (OpSamp inSamps :: TestOpF)
             op = Fix (OpSlice (Reps 2) (Arc 1 3) inner :: TestOpF)
         opAnnoExtentSingle (Rate 1) op
-          === Right (MemoP (Extent (Arc 1 5)) (OpSlice (Reps 2) (Arc 1 3) (MemoP (Extent (Arc 0 6)) (OpSamp inSamps))))
+          === Right (MemoP (Extent (Arc 0 4)) (OpSlice (Reps 2) (Arc 1 3) (MemoP (Extent (Arc 0 6)) (OpSamp inSamps))))
     , -- TODO fix this
       -- opRenderSimple (Rate 1) op === Right (isampsFromList [2, 3, 2, 3])
       testUnit "opAnnoExtent OpConcat" $ do
@@ -102,7 +102,7 @@ opTests lim =
         opAnnoExtentSingle (Rate 1) op
           === Right
             ( MemoP
-                (Extent (Arc 0 3))
+                (Extent (Arc 0 6))
                 ( OpConcat
                     ( Seq.fromList
                         [MemoP (Extent (Arc 0 3)) (OpSamp inSamps1), MemoP (Extent (Arc 0 3)) (OpSamp inSamps2)]
@@ -112,7 +112,7 @@ opTests lim =
     , -- TODO fix this
       -- opRenderSimple (Rate 1) op === Right (isampsFromList [1, 2, 3, 4, 5, 6])
       testUnit "opAnnoExtent OpMerge" $ do
-        let inSamps1 = isampsFromList [1, 2, 3]
+        let inSamps1 = isampsFromList [1, 2]
             inSamps2 = isampsFromList [4, 5, 6]
             op1 = Fix (OpSamp inSamps1 :: TestOpF)
             op2 = Fix (OpSamp inSamps2 :: TestOpF)
@@ -123,11 +123,11 @@ opTests lim =
                 (Extent (Arc 0 3))
                 ( OpMerge
                     ( Seq.fromList
-                        [MemoP (Extent (Arc 0 3)) (OpSamp inSamps1), MemoP (Extent (Arc 0 3)) (OpSamp inSamps2)]
+                        [MemoP (Extent (Arc 0 2)) (OpSamp inSamps1), MemoP (Extent (Arc 0 3)) (OpSamp inSamps2)]
                     )
                 )
             )
-        opRenderSimple (Rate 1) op === Right (isampsFromList [5, 7, 9])
+        opRenderSimple (Rate 1) op === Right (isampsFromList [5, 7, 6])
     , testUnit "opAnnoExtent OpRef" $ do
         let op = Fix (OpRef 'a' :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Left 'a'
