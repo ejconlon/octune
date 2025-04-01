@@ -400,16 +400,12 @@ opAnnoLenTopo rate m = topoAnnoM opRefs m (opInferLenF rate)
 
 newtype Samples = Samples {runSamples :: Arc Time -> InternalSamples}
 
-opRender :: forall m n. (Monad m) => Rate -> (n -> m Samples) -> Memo (OpF n) Delta -> m Samples
+opRender :: (Monad m) => Rate -> (n -> m Samples) -> Memo (OpF n) Delta -> m Samples
 opRender rate onRef = goTop
  where
-  goTop :: Memo (OpF n) Delta -> m Samples
   goTop = memoRecallM go
-  arrEmpty :: Arc Time -> InternalSamples
   arrEmpty arc = isampsConstant (arcLen @ElemCount (quantize rate arc)) 0
-  sampsEmpty :: Samples
   sampsEmpty = Samples arrEmpty
-  go :: OpF n (Anno Delta Samples) -> ReaderT Delta m Samples
   go = \case
     OpEmpty -> pure sampsEmpty
     OpSamp x -> do
@@ -425,10 +421,8 @@ opRender rate onRef = goTop
             in  if s' >= i || e' <= 0 || s' >= e'
                   then isampsConstant l 0
                   else
-                    let preLen = s' - s
-                        preSamps = isampsConstant preLen 0
-                        postLen = e - e'
-                        postSamps = isampsConstant postLen 0
+                    let preSamps = isampsConstant (s' - s) 0
+                        postSamps = isampsConstant (e - e') 0
                         bodySamps = isampsTrim s' l x
                     in  isampsConcat [preSamps, bodySamps, postSamps]
     OpSlice n (Arc ss se) (Anno rlen rsamp) ->
@@ -436,10 +430,8 @@ opRender rate onRef = goTop
           sarcLen' = arcLen sarc'
       in  pure $ Samples $ \(Arc s e) ->
             let arc'@(Arc s' e') = Arc (arcStart sarc' + s) (min e (addDelta s sarcLen'))
-                preLen = arcLen @ElemCount (quantize rate (Arc s s'))
-                preSamps = isampsConstant preLen 0
-                postLen = arcLen @ElemCount (quantize rate (Arc e' e))
-                postSamps = isampsConstant postLen 0
+                preSamps = arrEmpty (Arc s s')
+                postSamps = arrEmpty (Arc e' e)
                 bodySamps = runSamples rsamp arc'
                 samps = isampsConcat [preSamps, bodySamps, postSamps]
             in  isampsReplicate (fromIntegral n) samps
@@ -452,10 +444,8 @@ opRender rate onRef = goTop
             in  case arcIntersect arc whole of
                   Nothing -> isampsConstant elemLen 0
                   Just filtArc@(Arc fs fe) ->
-                    let preLen = arcLen @ElemCount (quantize rate (Arc s fs))
-                        preSamps = isampsConstant preLen 0
-                        postLen = arcLen @ElemCount (quantize rate (Arc fe e))
-                        postSamps = isampsConstant postLen 0
+                    let preSamps = arrEmpty (Arc s fs)
+                        postSamps = arrEmpty (Arc fe e)
                         -- Go through (len, gen) pairs of subArcs to find which overlap with filtArc.
                         -- For each overlap, generate samples, then concatenate them all together
                         gen !samps = \case
@@ -471,6 +461,13 @@ opRender rate onRef = goTop
                     in  isampsConcat (toList (preSamps :<| (genSamps :|> postSamps)))
     OpMerge rs -> pure (Samples (\arc -> isampsMix (fmap ((`runSamples` arc) . annoVal) (toList rs))))
     OpRef n -> lift (onRef n)
+
+opRenderSimple :: Rate -> Op n -> Either n InternalSamples
+opRenderSimple rate op = do
+  op' <- opAnnoLenSingle rate op
+  samps <- opRender rate Left op'
+  let arc = arcFrom 0 (memoKey op')
+  pure (runSamples samps arc)
 
 -- data ExSamps n = ExSamps
 --   { esLen :: !Len
