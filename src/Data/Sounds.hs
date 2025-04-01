@@ -293,6 +293,7 @@ instance Quantize Time Rate where
   quantize (Rate r) (Arc (Time s) (Time e)) = Arc (truncate (s * r)) (ceiling (e * r))
   unquantize (Rate r) (Arc s e) = Arc (Time (fromIntegral s / r)) (Time (fromIntegral e / r))
 
+-- TODO support Rational reps
 newtype Reps = Reps {unReps :: Integer}
   deriving stock (Eq, Show)
   deriving newtype (Num, Ord, Enum, Real, Integral)
@@ -365,42 +366,66 @@ opRefs = cata $ \case
   OpRef n -> Set.singleton n
   op -> fold op
 
-opInferLenF :: (Monad m) => Rate -> (n -> m Delta) -> OpF n Delta -> m Delta
-opInferLenF rate onRef = \case
-  OpEmpty -> pure 0
+newtype Extent = Extent {unExtent :: Arc Time}
+  deriving stock (Eq, Ord, Show)
+
+mkExtent :: Arc Time -> Extent
+mkExtent arc@(Arc s e) = Extent (if s >= e then Arc 0 0 else arc)
+
+extentPosArc :: Extent -> Maybe (Arc Time)
+extentPosArc (Extent (Arc s e)) =
+  if s >= e || e <= 0
+    then Nothing
+    else Just (Arc 0 e)
+
+extentLen :: Extent -> Delta
+extentLen = maybe 0 arcLen . extentPosArc
+
+instance Semigroup Extent where
+  ea@(Extent a) <> eb@(Extent b)
+    | arcNull a = eb
+    | arcNull b = ea
+    | otherwise = Extent (arcUnion a b)
+
+instance Monoid Extent where
+  mempty = Extent (Arc 0 0)
+
+opInferExtentF :: (Monad m) => Rate -> (n -> m Extent) -> OpF n Extent -> m Extent
+opInferExtentF rate onRef = \case
+  OpEmpty -> pure mempty
   OpSamp x ->
     let i = isampsLength x
     in  pure $
           if i == 0
-            then 0
-            else arcLen @Time (unquantize rate (Arc 0 i))
-  OpSlice n sarc _ -> pure (mulReps n (arcLen sarc))
+            then mempty
+            else mkExtent (unquantize rate (Arc 0 i))
+  OpSlice n sarc _ -> pure (mkExtent (arcReps sarc n))
   OpShift _ r -> pure r
   OpConcat rs -> pure (fold rs)
   OpMerge rs -> pure (maximum rs)
   OpRef n -> onRef n
 
-opInferLen :: (Monad m) => Rate -> (n -> m Delta) -> Op n -> m Delta
-opInferLen rate f = cataM (opInferLenF rate f)
+opInferExtent :: (Monad m) => Rate -> (n -> m Extent) -> Op n -> m Extent
+opInferExtent rate f = cataM (opInferExtentF rate f)
 
-opInferLenSingle :: Rate -> Op n -> Either n Delta
-opInferLenSingle rate = opInferLen rate Left
+opInferExtentSingle :: Rate -> Op n -> Either n Extent
+opInferExtentSingle rate = opInferExtent rate Left
 
-opInferLenTopo :: (Ord n) => Rate -> Map n (Op n) -> Either (SortErr n) (Map n (Either n Delta))
-opInferLenTopo rate m = topoEval opRefs m (opInferLen rate)
+opInferExtentTopo :: (Ord n) => Rate -> Map n (Op n) -> Either (SortErr n) (Map n (Either n Extent))
+opInferExtentTopo rate m = topoEval opRefs m (opInferExtent rate)
 
-opAnnoLen :: (Monad m) => Rate -> (n -> m Delta) -> Op n -> m (Memo (OpF n) Delta)
-opAnnoLen rate f = mkMemoM (opInferLenF rate f)
+opAnnoExtent :: (Monad m) => Rate -> (n -> m Extent) -> Op n -> m (Memo (OpF n) Extent)
+opAnnoExtent rate f = mkMemoM (opInferExtentF rate f)
 
-opAnnoLenSingle :: Rate -> Op n -> Either n (Memo (OpF n) Delta)
-opAnnoLenSingle rate = opAnnoLen rate Left
+opAnnoExtentSingle :: Rate -> Op n -> Either n (Memo (OpF n) Extent)
+opAnnoExtentSingle rate = opAnnoExtent rate Left
 
-opAnnoLenTopo :: (Ord n) => Rate -> Map n (Op n) -> Either (SortErr n) (Map n (Either n (Memo (OpF n) Delta)))
-opAnnoLenTopo rate m = topoAnnoM opRefs m (opInferLenF rate)
+opAnnoExtentTopo :: (Ord n) => Rate -> Map n (Op n) -> Either (SortErr n) (Map n (Either n (Memo (OpF n) Extent)))
+opAnnoExtentTopo rate m = topoAnnoM opRefs m (opInferExtentF rate)
 
 newtype Samples = Samples {runSamples :: Arc Time -> InternalSamples}
 
-opRender :: (Monad m) => Rate -> (n -> m Samples) -> Memo (OpF n) Delta -> m Samples
+opRender :: (Monad m) => Rate -> (n -> m Samples) -> Memo (OpF n) Extent -> m Samples
 opRender rate onRef = goTop
  where
   goTop = memoRecallM go
@@ -425,8 +450,8 @@ opRender rate onRef = goTop
                         postSamps = isampsConstant (e - e') 0
                         bodySamps = isampsTrim s' l x
                     in  isampsConcat [preSamps, bodySamps, postSamps]
-    OpSlice n (Arc ss se) (Anno rlen rsamp) ->
-      let sarc' = Arc ss (min se (addDelta ss rlen))
+    OpSlice n (Arc ss se) (Anno rext rsamp) ->
+      let sarc' = Arc ss (min se (addDelta ss (extentLen rext)))
           sarcLen' = arcLen sarc'
       in  pure $ Samples $ \(Arc s e) ->
             let arc'@(Arc s' e') = Arc (arcStart sarc' + s) (min e (addDelta s sarcLen'))
@@ -437,7 +462,7 @@ opRender rate onRef = goTop
             in  isampsReplicate (fromIntegral n) samps
     OpShift c r -> pure (Samples (\arc -> runSamples (annoVal r) (arcShift arc c)))
     OpConcat rs ->
-      let (tot, subArcs) = foldl' (\(t, a) (Anno l g) -> let e = addDelta t l in (e, a :|> (Arc t e, g))) (0, Empty) rs
+      let (tot, subArcs) = foldl' (\(t, a) (Anno l g) -> let e = addDelta t (extentLen l) in (e, a :|> (Arc t e, g))) (0, Empty) rs
           whole = Arc 0 tot
       in  pure $ Samples $ \arc@(Arc s e) ->
             let elemLen = arcLen @ElemCount (quantize rate arc)
@@ -464,10 +489,9 @@ opRender rate onRef = goTop
 
 opRenderSimple :: Rate -> Op n -> Either n InternalSamples
 opRenderSimple rate op = do
-  op' <- opAnnoLenSingle rate op
+  op' <- opAnnoExtentSingle rate op
   samps <- opRender rate Left op'
-  let arc = arcFrom 0 (memoKey op')
-  pure (runSamples samps arc)
+  pure (maybe isampsEmpty (runSamples samps) (extentPosArc (memoKey op')))
 
 -- data ExSamps n = ExSamps
 --   { esLen :: !Len

@@ -11,14 +11,15 @@ import Data.Set qualified as Set
 import Data.Sounds
   ( Arc (..)
   , Delta (..)
+  , Extent (..)
   , InternalSamples (..)
   , Op
   , OpF (..)
   , Rate (..)
   , Reps (..)
   , isampsFromList
-  , opAnnoLenSingle
-  , opInferLenTopo
+  , opAnnoExtentSingle
+  , opInferExtentTopo
   , opRenderSimple
   )
 import Data.Topo (SortErr, topoSort)
@@ -66,69 +67,71 @@ opTests :: TestLimit -> TestTree
 opTests lim =
   testGroup
     "op"
-    [ testUnit "opAnnoLen OpEmpty" $ do
+    [ testUnit "opAnnoExtent OpEmpty" $ do
         let op = Fix (OpEmpty :: TestOpF)
-        opAnnoLenSingle (Rate 1) op === Right (MemoP 0 OpEmpty)
+        opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 0 0)) OpEmpty)
         opRenderSimple (Rate 1) op === Right (isampsFromList [])
-    , testUnit "opAnnoLen OpSamp" $ do
+    , testUnit "opAnnoExtent OpSamp" $ do
         let inSamps = isampsFromList [1, 2, 3]
             op = Fix (OpSamp inSamps :: TestOpF)
-        opAnnoLenSingle (Rate 1) op === Right (MemoP 3 (OpSamp inSamps))
+        opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))
         opRenderSimple (Rate 1) op === Right inSamps
-    , testUnit "opAnnoLen OpShift" $ do
+    , testUnit "opAnnoExtent OpShift" $ do
         let inSamps = isampsFromList [1, 2, 3]
             inner = Fix (OpSamp inSamps :: TestOpF)
             op = Fix (OpShift (Delta 2) inner :: TestOpF)
         -- TODO Annotate with extents for correct final length
-        opAnnoLenSingle (Rate 1) op === Right (MemoP 3 (OpShift (Delta 2) (MemoP 3 (OpSamp inSamps))))
+        opAnnoExtentSingle (Rate 1) op
+          === Right (MemoP (Extent (Arc 0 3)) (OpShift (Delta 2) (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
     , -- TODO fix this
       -- opRenderSimple (Rate 1) op === Right (isampsFromList [0, 0, 1, 2, 3])
-      testUnit "opAnnoLen OpSlice" $ do
+      testUnit "opAnnoExtent OpSlice" $ do
         let inSamps = isampsFromList [1, 2, 3, 4, 5, 6]
             inner = Fix (OpSamp inSamps :: TestOpF)
             op = Fix (OpSlice (Reps 2) (Arc 1 3) inner :: TestOpF)
-        opAnnoLenSingle (Rate 1) op === Right (MemoP 4 (OpSlice (Reps 2) (Arc 1 3) (MemoP 6 (OpSamp inSamps))))
+        opAnnoExtentSingle (Rate 1) op
+          === Right (MemoP (Extent (Arc 1 5)) (OpSlice (Reps 2) (Arc 1 3) (MemoP (Extent (Arc 0 6)) (OpSamp inSamps))))
     , -- TODO fix this
       -- opRenderSimple (Rate 1) op === Right (isampsFromList [2, 3, 2, 3])
-      testUnit "opAnnoLen OpConcat" $ do
+      testUnit "opAnnoExtent OpConcat" $ do
         let inSamps1 = isampsFromList [1, 2, 3]
             inSamps2 = isampsFromList [4, 5, 6]
             op1 = Fix (OpSamp inSamps1 :: TestOpF)
             op2 = Fix (OpSamp inSamps2 :: TestOpF)
             op = Fix (OpConcat (Seq.fromList [op1, op2]) :: TestOpF)
-        opAnnoLenSingle (Rate 1) op
+        opAnnoExtentSingle (Rate 1) op
           === Right
             ( MemoP
-                6
+                (Extent (Arc 0 3))
                 ( OpConcat
                     ( Seq.fromList
-                        [MemoP 3 (OpSamp inSamps1), MemoP 3 (OpSamp inSamps2)]
+                        [MemoP (Extent (Arc 0 3)) (OpSamp inSamps1), MemoP (Extent (Arc 0 3)) (OpSamp inSamps2)]
                     )
                 )
             )
     , -- TODO fix this
       -- opRenderSimple (Rate 1) op === Right (isampsFromList [1, 2, 3, 4, 5, 6])
-      testUnit "opAnnoLen OpMerge" $ do
+      testUnit "opAnnoExtent OpMerge" $ do
         let inSamps1 = isampsFromList [1, 2, 3]
             inSamps2 = isampsFromList [4, 5, 6]
             op1 = Fix (OpSamp inSamps1 :: TestOpF)
             op2 = Fix (OpSamp inSamps2 :: TestOpF)
             op = Fix (OpMerge (Seq.fromList [op1, op2]) :: TestOpF)
-        opAnnoLenSingle (Rate 1) op
+        opAnnoExtentSingle (Rate 1) op
           === Right
             ( MemoP
-                3
+                (Extent (Arc 0 3))
                 ( OpMerge
                     ( Seq.fromList
-                        [MemoP 3 (OpSamp inSamps1), MemoP 3 (OpSamp inSamps2)]
+                        [MemoP (Extent (Arc 0 3)) (OpSamp inSamps1), MemoP (Extent (Arc 0 3)) (OpSamp inSamps2)]
                     )
                 )
             )
         opRenderSimple (Rate 1) op === Right (isampsFromList [5, 7, 9])
-    , testUnit "opAnnoLen OpRef" $ do
+    , testUnit "opAnnoExtent OpRef" $ do
         let op = Fix (OpRef 'a' :: TestOpF)
-        opAnnoLenSingle (Rate 1) op === Left 'a'
-    , testProp "opInferLenTopo respects dependencies" lim $ do
+        opAnnoExtentSingle (Rate 1) op === Left 'a'
+    , testProp "opInferExtentTopo respects dependencies" lim $ do
         -- Generate a set of valid keys
         keys <- forAll $ Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z'])
         let validKeys = Set.fromList keys
@@ -137,7 +140,7 @@ opTests lim =
         ops <- forAll $ genValidOpMap validKeys
 
         -- Get inferred lengths
-        case opInferLenTopo (Rate 1) ops of
+        case opInferExtentTopo (Rate 1) ops of
           Left _ -> pure () -- Skip if inference fails
           Right inferred -> do
             -- For each key in the map
@@ -147,7 +150,7 @@ opTests lim =
                 Nothing -> pure () -- Skip if no inference
                 Just (Right infLen) -> do
                   -- Get the annotated length
-                  case opAnnoLenSingle (Rate 1) (ops Map.! k) of
+                  case opAnnoExtentSingle (Rate 1) (ops Map.! k) of
                     Left _ -> pure () -- Skip if annotation fails
                     Right (MemoP annLen _) -> do
                       -- Inferred length should be >= annotated length
