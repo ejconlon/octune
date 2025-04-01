@@ -1,34 +1,24 @@
 module Data.Sounds where
 
-import Control.Monad.Trans (lift)
-import Bowtie (Fix (..), Memo, memoKey, pattern MemoP, memoCata, memoCataM, cataM, mkMemoM, Anno (..))
-import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, withMVar)
+import Bowtie (Anno (..), Fix (..), Memo, cataM, memoKey, mkMemoM, pattern MemoP)
 import Control.DeepSeq (NFData)
-import Control.Exception (Exception)
-import Control.Monad (join, unless, void, when, (>=>))
-import Control.Monad.Except (Except, runExcept, runExceptT, throwError)
-import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Par (IVar, InclusiveRange (..), parFor)
-import Control.Monad.Par.Class qualified as Par
-import Control.Monad.Primitive (PrimMonad (..), RealWorld)
-import Control.Monad.Reader (ReaderT (..), ask, asks, local)
-import Control.Monad.State.Strict (State, StateT, execStateT, gets, modify', runState)
+import Control.Monad (unless, when, (>=>))
+import Control.Monad.Primitive (PrimMonad (..))
+import Control.Monad.Reader (ReaderT (..))
+import Control.Monad.Trans (lift)
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
 import Dahdit.LiftedPrimArray (LiftedPrimArray (..))
 import Dahdit.Sizes (ByteCount (..), ElemCount (..))
-import Data.Foldable (fold, for_, toList, traverse_, foldl')
-import Data.Functor.Foldable (cata, Recursive (..), Base)
+import Data.Foldable (fold, foldl', for_, toList)
+import Data.Functor.Foldable (Recursive (..), cata)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
-import Data.Map.Strict qualified as Map
-import Data.PrimPar (ReadPar, runReadPar)
 import Data.Primitive.ByteArray (ByteArray (..))
 import Data.Primitive.PrimArray
   ( MutablePrimArray
   , PrimArray (..)
   , clonePrimArray
-  , copyMutablePrimArray
   , copyPrimArray
   , emptyPrimArray
   , generatePrimArray
@@ -41,22 +31,25 @@ import Data.Primitive.PrimArray
   , runPrimArray
   , setPrimArray
   , sizeofPrimArray
-  , unsafeFreezePrimArray
   , writePrimArray
   )
 import Data.Primitive.Types (Prim)
 import Data.STRef.Strict (newSTRef, readSTRef, writeSTRef)
 import Data.Semigroup (Max (..), Sum (..))
 import Data.Sequence (Seq (..))
-import Data.Sequence qualified as Seq
 import Data.Set (Set)
 import Data.Set qualified as Set
-import Data.Topo (SortErr (..), topoEval, topoSort, topoAnnoM)
-import Data.Typeable (Typeable)
+import Data.Topo (SortErr (..), topoAnnoM, topoEval)
 import Paths_octune (getDataFileName)
+import System.Directory (doesFileExist)
 import System.IO.Unsafe (unsafePerformIO)
-import Control.Applicative (empty)
-import Data.Ratio ((%))
+
+-- Bowtie utils
+
+memoRecallM :: (Monad m, Traversable f) => (f (Anno k v) -> ReaderT k m v) -> Memo f k -> m v
+memoRecallM f = go
+ where
+  go (MemoP k fm) = traverse (\m -> fmap (Anno (memoKey m)) (go m)) fm >>= \fa -> runReaderT (f fa) k
 
 -- Prim adapters
 
@@ -236,7 +229,13 @@ loadSamples :: FilePath -> IO InternalSamples
 loadSamples = getWAVEFile >=> readSamples
 
 loadDataSamples :: String -> InternalSamples
-loadDataSamples name = unsafePerformIO (getDataFileName ("data/" ++ name ++ ".wav") >>= loadSamples)
+loadDataSamples name =
+  -- Default to resources but fall back to filesystem for ghci
+  let part = "data/" ++ name ++ ".wav"
+  in  unsafePerformIO $ do
+        resPath <- getDataFileName part
+        resExists <- doesFileExist resPath
+        loadSamples (if resExists then resPath else part)
 
 snareSamples :: InternalSamples
 snareSamples = loadDataSamples "snare"
@@ -269,8 +268,8 @@ instance Measure ElemCount ElemCount where
   addDelta c d = c + d
 
 class (Ord t, Ord r) => Quantize t r | t -> r where
-  quantize :: Integral u => r -> Arc t -> Arc u
-  unquantize :: Integral u => r -> Arc u -> Arc t
+  quantize :: (Integral u) => r -> Arc t -> Arc u
+  unquantize :: (Integral u) => r -> Arc u -> Arc t
 
 newtype Time = Time {unTime :: Rational}
   deriving stock (Eq, Show)
@@ -279,6 +278,7 @@ newtype Time = Time {unTime :: Rational}
 newtype Delta = Delta {unDelta :: Rational}
   deriving stock (Eq, Show)
   deriving newtype (Num, Ord, Enum, Real, Fractional, RealFrac)
+  deriving (Semigroup, Monoid) via (Sum Rational)
 
 instance Measure Time Delta where
   measureDelta (Time t1) (Time t2) = Delta (t2 - t1)
@@ -296,6 +296,7 @@ instance Quantize Time Rate where
 newtype Reps = Reps {unReps :: Integer}
   deriving stock (Eq, Show)
   deriving newtype (Num, Ord, Enum, Real, Integral)
+  deriving (Semigroup, Monoid) via (Sum Integer)
 
 mulReps :: (Num d) => Reps -> d -> d
 mulReps (Reps n) d = fromInteger n * d
@@ -307,81 +308,51 @@ data Arc t = Arc
   }
   deriving stock (Eq, Ord, Show)
 
-arcEmpty :: Num t => Arc t
+arcEmpty :: (Num t) => Arc t
 arcEmpty = Arc 0 0
 
-arcUnion :: Ord t => Arc t -> Arc t -> Maybe (Arc t)
+arcUnion :: (Ord t) => Arc t -> Arc t -> Arc t
 arcUnion (Arc s1 e1) (Arc s2 e2) =
   let s3 = min s1 s2
       e3 = max e1 e2
-  in if s3 < e3 && (s2 <= e1 || s1 <= e2) then Just (Arc s3 e3) else Nothing
+  in  Arc s3 e3
 
-arcIntersect :: Measure t d => Arc t -> Arc t -> Maybe (Arc t)
+arcIntersect :: (Measure t d) => Arc t -> Arc t -> Maybe (Arc t)
 arcIntersect (Arc s1 e1) (Arc s2 e2) =
   let s3 = max s1 s2
       e3 = min e1 e2
-  in if s3 < e3 && (s2 <= e1 || s1 <= e2) then Just (Arc s3 e3) else Nothing
+  in  if s2 <= e1 || s1 <= e2 then Just (Arc s3 e3) else Nothing
 
-arcLen :: Measure t d => Arc t -> d
+arcLen :: (Measure t d) => Arc t -> d
 arcLen (Arc s e) = measureDelta s e
 
-arcFrom :: Measure t d => t -> d -> Arc t
+arcFrom :: (Measure t d) => t -> d -> Arc t
 arcFrom t d = Arc t (addDelta t d)
 
-arcNull :: Measure t d => Arc t  -> Bool
+arcNull :: (Measure t d) => Arc t -> Bool
 arcNull = (0 ==) . arcLen
 
-arcShift :: Measure t d => Arc t -> d -> Arc t
+arcShift :: (Measure t d) => Arc t -> d -> Arc t
 arcShift (Arc s e) d = Arc (addDelta s d) (addDelta e d)
 
-arcReps :: Measure t d => Arc t -> Reps -> Arc t
+arcReps :: (Measure t d) => Arc t -> Reps -> Arc t
 arcReps (Arc s e) n = Arc s (addDelta s (mulReps n (measureDelta s e)))
 
-data Span t d =
-    SpanEmpty
-  | SpanRepeat !t
-  | SpanFixed !(Arc t)
-  deriving stock (Eq, Show)
+data Overlap t = OverlapLt | OverlapEq !(Arc t) | OverlapGt
+  deriving stock (Eq, Ord, Show)
 
-spanShift :: Measure t d => Span t d -> d -> Span t d
-spanShift SpanEmpty _ = SpanEmpty
-spanShift (SpanRepeat s) d = SpanRepeat (addDelta s d)
-spanShift (SpanFixed a) d = SpanFixed (arcShift a d)
-
-spanCombine :: (Measure t d, Num t) => (d -> d -> d) -> Span t d -> Span t d -> Span t d
-spanCombine f = go where
-  r0 = SpanRepeat 0
-  go acc = \case
-    SpanEmpty -> acc
-    SpanRepeat _ -> r0
-    SpanFixed arc2 -> case acc of
-      SpanEmpty -> SpanFixed (Arc 0 (addDelta 0 (arcLen arc2)))
-      SpanRepeat _ -> r0
-      SpanFixed arc1 -> SpanFixed (Arc 0 (addDelta 0 (f (arcLen arc1) (arcLen arc2))))
-
-spanConcat :: (Foldable f, Measure t d, Num t) => f (Span t d) -> Span t d
-spanConcat = foldl' (spanCombine (+)) SpanEmpty
-
-spanMerge :: (Foldable f, Measure t d, Num t) => f (Span t d) -> Span t d
-spanMerge = foldl' (spanCombine max) SpanEmpty
-
--- spanIntersectArc :: (Measure t d) => Span t d -> Arc t -> Maybe (Arc t)
--- spanIntersectArc SpanEmpty _ = Nothing
--- spanIntersectArc (SpanRepeat s1) arc2@(Arc _ e2) = arcIntersect (Arc s1 (max s1 e2)) arc2
--- spanIntersectArc (SpanFixed arc1) arc2 = arcIntersect arc1 arc2
-
-type TimeSpan = Span Time Delta
+arcOverlap :: (Ord t) => Arc t -> Arc t -> Overlap t
+arcOverlap (Arc ns ne) (Arc hs he) =
+  if
+    | ne <= hs -> OverlapLt
+    | ns >= he -> OverlapGt
+    | otherwise -> OverlapEq (Arc (max ns hs) (min ne he))
 
 data OpF n r
   = OpEmpty
   | OpSamp !InternalSamples
-  | -- | Length in (0, inf)
-    OpFrame !Delta r
-  | -- | Length in (-inf, inf)
-    OpShift !Delta r
-  | OpRepeat r
-  | -- | Repetitions in (0, inf)
-    OpReplicate !Reps r
+  | OpShift !Delta r
+  | OpSlice !Reps !(Arc Time) r
   | OpConcat !(Seq r)
   | OpMerge !(Seq r)
   | OpRef !n
@@ -394,90 +365,111 @@ opRefs = cata $ \case
   OpRef n -> Set.singleton n
   op -> fold op
 
-opInferSpanF :: (Monad m) => Rate -> (n -> m TimeSpan) -> OpF n TimeSpan -> m TimeSpan
-opInferSpanF rate onRef = \case
-  OpEmpty -> pure SpanEmpty
+opInferLenF :: (Monad m) => Rate -> (n -> m Delta) -> OpF n Delta -> m Delta
+opInferLenF rate onRef = \case
+  OpEmpty -> pure 0
   OpSamp x ->
     let i = isampsLength x
-    in pure $ if i == 0
-      then SpanEmpty
-      else SpanFixed (unquantize rate (Arc 0 i))
-  OpFrame b r ->
-    case r of
-      SpanEmpty -> pure (SpanFixed (arcFrom 0 b))
-      SpanRepeat s -> pure (SpanFixed (arcFrom s b))
-      SpanFixed (Arc s _) -> pure (SpanFixed (arcFrom s b))
-  OpShift c r ->
-    case r of
-      SpanEmpty -> pure SpanEmpty
-      SpanRepeat s -> pure (SpanRepeat (addDelta s c))
-      SpanFixed a -> pure (SpanFixed (arcShift a c))
-  OpRepeat r ->
-    case r of
-      SpanEmpty -> pure SpanEmpty
-      SpanRepeat s -> pure (SpanRepeat s)
-      SpanFixed (Arc s _) -> pure (SpanRepeat s)
-  OpReplicate n r ->
-    case r of
-      SpanEmpty -> pure SpanEmpty
-      SpanRepeat s -> pure (SpanRepeat s)
-      SpanFixed arc -> pure (SpanFixed (arcReps arc n))
-  OpConcat rs -> pure (spanConcat rs)
-  OpMerge rs -> pure (spanMerge rs)
+    in  pure $
+          if i == 0
+            then 0
+            else arcLen @Time (unquantize rate (Arc 0 i))
+  OpSlice n sarc _ -> pure (mulReps n (arcLen sarc))
+  OpShift _ r -> pure r
+  OpConcat rs -> pure (fold rs)
+  OpMerge rs -> pure (maximum rs)
   OpRef n -> onRef n
 
-opInferSpan :: (Monad m) => Rate -> (n -> m TimeSpan) -> Op n -> m TimeSpan
-opInferSpan rate f = cataM (opInferSpanF rate f)
+opInferLen :: (Monad m) => Rate -> (n -> m Delta) -> Op n -> m Delta
+opInferLen rate f = cataM (opInferLenF rate f)
 
-opInferSpanTopo :: (Ord n) => Rate -> Map n (Op n) -> Either (SortErr n) (Map n (Either n TimeSpan))
-opInferSpanTopo rate m = topoEval opRefs m (opInferSpan rate)
+opInferLenSingle :: Rate -> Op n -> Either n Delta
+opInferLenSingle rate = opInferLen rate Left
 
-opAnnoSpan :: (Monad m) => Rate -> (n -> m TimeSpan) -> Op n -> m (Memo (OpF n) TimeSpan)
-opAnnoSpan rate f = mkMemoM (opInferSpanF rate f)
+opInferLenTopo :: (Ord n) => Rate -> Map n (Op n) -> Either (SortErr n) (Map n (Either n Delta))
+opInferLenTopo rate m = topoEval opRefs m (opInferLen rate)
 
-opAnnoSpanTopo :: (Ord n) => Rate -> Map n (Op n) -> Either (SortErr n) (Map n (Either n (Memo (OpF n) TimeSpan)))
-opAnnoSpanTopo rate m = topoAnnoM opRefs m (opInferSpanF rate)
+opAnnoLen :: (Monad m) => Rate -> (n -> m Delta) -> Op n -> m (Memo (OpF n) Delta)
+opAnnoLen rate f = mkMemoM (opInferLenF rate f)
 
-newtype Samples = Samples { runSamples :: Arc Time -> InternalSamples }
+opAnnoLenSingle :: Rate -> Op n -> Either n (Memo (OpF n) Delta)
+opAnnoLenSingle rate = opAnnoLen rate Left
 
-memoRecallM :: (f (Anno k v) -> ReaderT k m v) -> Memo f k -> m v
-memoRecallM = undefined
+opAnnoLenTopo :: (Ord n) => Rate -> Map n (Op n) -> Either (SortErr n) (Map n (Either n (Memo (OpF n) Delta)))
+opAnnoLenTopo rate m = topoAnnoM opRefs m (opInferLenF rate)
 
-opRender :: forall m n. (Monad m) => Rate -> (n -> m Samples) -> Memo (OpF n) TimeSpan -> m Samples
-opRender rate onRef = goTop where
-  goTop :: Memo (OpF n) TimeSpan -> m Samples
-  goTop = memoCataM go
+newtype Samples = Samples {runSamples :: Arc Time -> InternalSamples}
+
+opRender :: forall m n. (Monad m) => Rate -> (n -> m Samples) -> Memo (OpF n) Delta -> m Samples
+opRender rate onRef = goTop
+ where
+  goTop :: Memo (OpF n) Delta -> m Samples
+  goTop = memoRecallM go
   arrEmpty :: Arc Time -> InternalSamples
   arrEmpty arc = isampsConstant (arcLen @ElemCount (quantize rate arc)) 0
   sampsEmpty :: Samples
   sampsEmpty = Samples arrEmpty
-  go :: OpF n Samples -> ReaderT TimeSpan m Samples
+  go :: OpF n (Anno Delta Samples) -> ReaderT Delta m Samples
   go = \case
     OpEmpty -> pure sampsEmpty
     OpSamp x -> do
       let i = isampsLength x
-      pure $ if i == 0
-        then sampsEmpty
-        else Samples $ \arc ->
-          let Arc s e = quantize rate arc
-          in if s >= i || e <= 0 || s == e
-            then isampsConstant (e - s) 0
-            else
-              if e > i
-                then
-                  let l1 = min i e
-                      l2 = e - s - l1
-                  in isampsConcat [isampsTrim s l1 x, isampsConstant l2 0]
-                else isampsTrim s (e - s) x
-    OpFrame b r ->
-      pure $ Samples $ \arc ->
-        let arc' = arcIntersect (arcFrom 0 b) arc
-        in maybe (arrEmpty arc) (runSamples r) arc'
-    OpShift c r -> pure (Samples (\arc -> runSamples r (arcShift arc (negate c))))
-    OpRepeat _r -> error "TODO"
-    OpReplicate n r -> error "TODO"
-    OpConcat rs -> error "TODO"
-    OpMerge rs -> pure (Samples (\arc -> isampsMix (fmap (`runSamples` arc) (toList rs))))
+      pure $
+        if i == 0
+          then sampsEmpty
+          else Samples $ \arc ->
+            let Arc s e = quantize rate arc
+                s' = max 0 s
+                e' = min i e
+                l = e - s
+            in  if s' >= i || e' <= 0 || s' >= e'
+                  then isampsConstant l 0
+                  else
+                    let preLen = s' - s
+                        preSamps = isampsConstant preLen 0
+                        postLen = e - e'
+                        postSamps = isampsConstant postLen 0
+                        bodySamps = isampsTrim s' l x
+                    in  isampsConcat [preSamps, bodySamps, postSamps]
+    OpSlice n (Arc ss se) (Anno rlen rsamp) ->
+      let sarc' = Arc ss (min se (addDelta ss rlen))
+          sarcLen' = arcLen sarc'
+      in  pure $ Samples $ \(Arc s e) ->
+            let arc'@(Arc s' e') = Arc (arcStart sarc' + s) (min e (addDelta s sarcLen'))
+                preLen = arcLen @ElemCount (quantize rate (Arc s s'))
+                preSamps = isampsConstant preLen 0
+                postLen = arcLen @ElemCount (quantize rate (Arc e' e))
+                postSamps = isampsConstant postLen 0
+                bodySamps = runSamples rsamp arc'
+                samps = isampsConcat [preSamps, bodySamps, postSamps]
+            in  isampsReplicate (fromIntegral n) samps
+    OpShift c r -> pure (Samples (\arc -> runSamples (annoVal r) (arcShift arc c)))
+    OpConcat rs ->
+      let (tot, subArcs) = foldl' (\(t, a) (Anno l g) -> let e = addDelta t l in (e, a :|> (Arc t e, g))) (0, Empty) rs
+          whole = Arc 0 tot
+      in  pure $ Samples $ \arc@(Arc s e) ->
+            let elemLen = arcLen @ElemCount (quantize rate arc)
+            in  case arcIntersect arc whole of
+                  Nothing -> isampsConstant elemLen 0
+                  Just filtArc@(Arc fs fe) ->
+                    let preLen = arcLen @ElemCount (quantize rate (Arc s fs))
+                        preSamps = isampsConstant preLen 0
+                        postLen = arcLen @ElemCount (quantize rate (Arc fe e))
+                        postSamps = isampsConstant postLen 0
+                        -- Go through (len, gen) pairs of subArcs to find which overlap with filtArc.
+                        -- For each overlap, generate samples, then concatenate them all together
+                        gen !samps = \case
+                          Empty -> samps
+                          (subArc, subGen) :<| rest -> do
+                            case arcOverlap filtArc subArc of
+                              OverlapLt -> gen samps rest
+                              OverlapEq narrowArc ->
+                                let subSamps = runSamples subGen narrowArc
+                                in  gen (samps :|> subSamps) rest
+                              OverlapGt -> samps
+                        genSamps = gen Empty subArcs
+                    in  isampsConcat (toList (preSamps :<| (genSamps :|> postSamps)))
+    OpMerge rs -> pure (Samples (\arc -> isampsMix (fmap ((`runSamples` arc) . annoVal) (toList rs))))
     OpRef n -> lift (onRef n)
 
 -- data ExSamps n = ExSamps

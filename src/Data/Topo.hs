@@ -6,9 +6,11 @@ module Data.Topo
   )
 where
 
+import Bowtie.Memo (Memo, memoKey, mkMemoM)
 import Control.Exception (Exception)
 import Control.Monad.Except (Except, runExcept, throwError)
 import Control.Monad.State.Strict (StateT (..), execState, gets, modify')
+import Data.Functor.Foldable (Base, Recursive (..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Sequence (Seq (..))
@@ -16,8 +18,6 @@ import Data.Sequence qualified as Seq
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Typeable (Typeable)
-import Data.Functor.Foldable (Base, Recursive (..))
-import Bowtie.Memo (Memo, mkMemoM, memoKey)
 
 data SortErr k
   = SortErrLoop !k
@@ -136,7 +136,12 @@ topoEval findValRefs m f = fmap (flip execState Map.empty . go) (topoSort findRe
 -- topoAnnoM :: (Monad m, Ord k, Base v ~ f, Traversable f) => (v -> Set k) -> Map k v -> ((k -> m w) -> v -> m w) -> m (Either (SortErr k) (Map k (Memo f w)))
 -- topoAnnoM = undefined
 
-topoAnnoM :: (Monad m, Ord k, Recursive v, Base v ~ f, Traversable f) => (v -> Set k) -> Map k v -> ((k -> m w) -> f w -> m w) -> Either (SortErr k) (Map k (m (Memo f w)))
+topoAnnoM
+  :: (Monad m, Ord k, Recursive v, Base v ~ f, Traversable f)
+  => (v -> Set k)
+  -> Map k v
+  -> ((k -> m w) -> f w -> m w)
+  -> Either (SortErr k) (Map k (m (Memo f w)))
 topoAnnoM findValRefs m f = fmap (flip execState Map.empty . go) (topoSort findRefs (Map.keys m))
  where
   findRefs = fmap findValRefs . flip Map.lookup m
@@ -149,5 +154,5 @@ topoAnnoM findValRefs m f = fmap (flip execState Map.empty . go) (topoSort findR
           modify' $ \c ->
             let g = f (fmap memoKey . (c Map.!))
                 x = mkMemoM g v
-            in Map.insert k x c
+            in  Map.insert k x c
           go ks

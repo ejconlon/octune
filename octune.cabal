@@ -90,6 +90,7 @@ library
     , dahdit >=0.8
     , dahdit-audio >=0.8
     , deepseq
+    , directory
     , either
     , lens
     , megaparsec
@@ -149,6 +150,7 @@ executable octune
     , dahdit >=0.8
     , dahdit-audio >=0.8
     , deepseq
+    , directory
     , either
     , lens
     , megaparsec
@@ -208,6 +210,7 @@ test-suite octune-test
     , dahdit >=0.8
     , dahdit-audio >=0.8
     , deepseq
+    , directory
     , either
     , lens
     , megaparsec

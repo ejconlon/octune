@@ -19,6 +19,7 @@ dependencies:
 - base >= 4.7 && < 5
 - abstract-par
 - containers
+- directory
 - dahdit >= 0.8
 - dahdit-audio >= 0.8
 - deepseq
