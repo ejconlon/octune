@@ -18,8 +18,8 @@ import Data.Sounds
   , Reps (..)
   , isampsFromList
   , opAnnoLenSingle
-  , opInferLenSingle
   , opInferLenTopo
+  , opRenderSimple
   )
 import Data.Topo (SortErr, topoSort)
 import PropUnit (Gen, TestLimit, TestTree, assert, forAll, testGroup, testMain, testProp, testUnit, (===))
@@ -60,47 +60,42 @@ topoSortTests lim =
                   Just ds -> assert (m `notElem` ds)
     ]
 
+type TestOpF = OpF Char (Fix (OpF Char))
+
 opTests :: TestLimit -> TestTree
 opTests lim =
   testGroup
     "op"
-    [ testUnit "opInferLen OpEmpty" $ do
-        let op = Fix (OpEmpty :: OpF Char (Fix (OpF Char)))
-        opInferLenSingle (Rate 1) op === Right 0
-    , testUnit "opInferLen OpSamp" $ do
-        let inSamps = isampsFromList [1, 2, 3]
-            op = Fix (OpSamp inSamps :: OpF Char (Fix (OpF Char)))
-        opInferLenSingle (Rate 1) op === Right 3
-    , testUnit "opInferLen OpConcat" $ do
-        let inSamps1 = isampsFromList [1, 2, 3]
-            inSamps2 = isampsFromList [4, 5, 6]
-            op1 = Fix (OpSamp inSamps1 :: OpF Char (Fix (OpF Char)))
-            op2 = Fix (OpSamp inSamps2 :: OpF Char (Fix (OpF Char)))
-            op = Fix (OpConcat (Seq.fromList [op1, op2]) :: OpF Char (Fix (OpF Char)))
-        opInferLenSingle (Rate 1) op === Right 6
-    , testUnit "opInferLen OpMerge" $ do
-        let inSamps1 = isampsFromList [1, 2, 3]
-            inSamps2 = isampsFromList [4, 5, 6]
-            op1 = Fix (OpSamp inSamps1 :: OpF Char (Fix (OpF Char)))
-            op2 = Fix (OpSamp inSamps2 :: OpF Char (Fix (OpF Char)))
-            op = Fix (OpMerge (Seq.fromList [op1, op2]) :: OpF Char (Fix (OpF Char)))
-        opInferLenSingle (Rate 1) op === Right 3
-    , testUnit "opInferLen OpRef" $ do
-        let op = Fix (OpRef 'a' :: OpF Char (Fix (OpF Char)))
-        opInferLenSingle (Rate 1) op === Left 'a'
-    , testUnit "opAnnoLen OpEmpty" $ do
-        let op = Fix (OpEmpty :: OpF Char (Fix (OpF Char)))
+    [ testUnit "opAnnoLen OpEmpty" $ do
+        let op = Fix (OpEmpty :: TestOpF)
         opAnnoLenSingle (Rate 1) op === Right (MemoP 0 OpEmpty)
+        opRenderSimple (Rate 1) op === Right (isampsFromList [])
     , testUnit "opAnnoLen OpSamp" $ do
         let inSamps = isampsFromList [1, 2, 3]
-            op = Fix (OpSamp inSamps :: OpF Char (Fix (OpF Char)))
+            op = Fix (OpSamp inSamps :: TestOpF)
         opAnnoLenSingle (Rate 1) op === Right (MemoP 3 (OpSamp inSamps))
-    , testUnit "opAnnoLen OpConcat" $ do
+        opRenderSimple (Rate 1) op === Right inSamps
+    , testUnit "opAnnoLen OpShift" $ do
+        let inSamps = isampsFromList [1, 2, 3]
+            inner = Fix (OpSamp inSamps :: TestOpF)
+            op = Fix (OpShift (Delta 2) inner :: TestOpF)
+        -- TODO Annotate with extents for correct final length
+        opAnnoLenSingle (Rate 1) op === Right (MemoP 3 (OpShift (Delta 2) (MemoP 3 (OpSamp inSamps))))
+    , -- TODO fix this
+      -- opRenderSimple (Rate 1) op === Right (isampsFromList [0, 0, 1, 2, 3])
+      testUnit "opAnnoLen OpSlice" $ do
+        let inSamps = isampsFromList [1, 2, 3, 4, 5, 6]
+            inner = Fix (OpSamp inSamps :: TestOpF)
+            op = Fix (OpSlice (Reps 2) (Arc 1 3) inner :: TestOpF)
+        opAnnoLenSingle (Rate 1) op === Right (MemoP 4 (OpSlice (Reps 2) (Arc 1 3) (MemoP 6 (OpSamp inSamps))))
+    , -- TODO fix this
+      -- opRenderSimple (Rate 1) op === Right (isampsFromList [2, 3, 2, 3])
+      testUnit "opAnnoLen OpConcat" $ do
         let inSamps1 = isampsFromList [1, 2, 3]
             inSamps2 = isampsFromList [4, 5, 6]
-            op1 = Fix (OpSamp inSamps1 :: OpF Char (Fix (OpF Char)))
-            op2 = Fix (OpSamp inSamps2 :: OpF Char (Fix (OpF Char)))
-            op = Fix (OpConcat (Seq.fromList [op1, op2]) :: OpF Char (Fix (OpF Char)))
+            op1 = Fix (OpSamp inSamps1 :: TestOpF)
+            op2 = Fix (OpSamp inSamps2 :: TestOpF)
+            op = Fix (OpConcat (Seq.fromList [op1, op2]) :: TestOpF)
         opAnnoLenSingle (Rate 1) op
           === Right
             ( MemoP
@@ -111,12 +106,14 @@ opTests lim =
                     )
                 )
             )
-    , testUnit "opAnnoLen OpMerge" $ do
+    , -- TODO fix this
+      -- opRenderSimple (Rate 1) op === Right (isampsFromList [1, 2, 3, 4, 5, 6])
+      testUnit "opAnnoLen OpMerge" $ do
         let inSamps1 = isampsFromList [1, 2, 3]
             inSamps2 = isampsFromList [4, 5, 6]
-            op1 = Fix (OpSamp inSamps1 :: OpF Char (Fix (OpF Char)))
-            op2 = Fix (OpSamp inSamps2 :: OpF Char (Fix (OpF Char)))
-            op = Fix (OpMerge (Seq.fromList [op1, op2]) :: OpF Char (Fix (OpF Char)))
+            op1 = Fix (OpSamp inSamps1 :: TestOpF)
+            op2 = Fix (OpSamp inSamps2 :: TestOpF)
+            op = Fix (OpMerge (Seq.fromList [op1, op2]) :: TestOpF)
         opAnnoLenSingle (Rate 1) op
           === Right
             ( MemoP
@@ -127,8 +124,9 @@ opTests lim =
                     )
                 )
             )
+        opRenderSimple (Rate 1) op === Right (isampsFromList [5, 7, 9])
     , testUnit "opAnnoLen OpRef" $ do
-        let op = Fix (OpRef 'a' :: OpF Char (Fix (OpF Char)))
+        let op = Fix (OpRef 'a' :: TestOpF)
         opAnnoLenSingle (Rate 1) op === Left 'a'
     , testProp "opInferLenTopo respects dependencies" lim $ do
         -- Generate a set of valid keys
