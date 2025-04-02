@@ -14,6 +14,7 @@ import Data.Foldable (fold, foldl', for_, toList)
 import Data.Functor.Foldable (Recursive (..), cata)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
+import Data.PrimPar (Mutex, ParArray, PrimPar)
 import Data.Primitive.ByteArray (ByteArray (..))
 import Data.Primitive.PrimArray
   ( MutablePrimArray
@@ -523,20 +524,20 @@ opRenderSimple rate op = do
   samps <- opRender rate Left op'
   pure (maybe isampsEmpty (runSamples samps) (extentPosArc (memoKey op')))
 
--- newtype MutSamples = MutSamples {runMutSamples :: Arc Time -> MVar (MutablePrimArray (PrimState PrimPar) Int32) -> PrimPar () }
+newtype MutSamples = MutSamples {runMutSamples :: Arc Time -> Mutex (ParArray Int32) -> PrimPar ()}
 
--- opRenderMut :: (Monad m) => Rate -> (n -> m MutSamples) -> Memo (OpF n) Extent -> m MutSamples
--- opRenderMut rate onRef = goTop
---  where
---   goTop = memoRecallM go
---   go = \case
---     OpEmpty -> undefined
---     OpSamp x -> undefined
---     OpSlice n (Arc ss se) (Anno rext rsamp) -> undefined
---     OpShift c r -> undefined
---     OpConcat rs -> undefined
---     OpMerge rs -> undefined
---     OpRef n -> lift (onRef n)
+opRenderMut :: (Monad m) => Rate -> (n -> m MutSamples) -> Memo (OpF n) Extent -> m MutSamples
+opRenderMut rate onRef = goTop
+ where
+  goTop = memoRecallM go
+  go = \case
+    OpEmpty -> undefined
+    OpSamp x -> undefined
+    OpSlice n (Arc ss se) (Anno rext rsamp) -> undefined
+    OpShift c r -> undefined
+    OpConcat rs -> undefined
+    OpMerge rs -> undefined
+    OpRef n -> lift (onRef n)
 
 -- opRenderMutSimple :: Rate -> Op n -> Either n (IO InternalSamples)
 -- opRenderMutSimple rate op = do

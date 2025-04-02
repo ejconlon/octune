@@ -1,20 +1,26 @@
 module Data.PrimPar
-  ( PrimPar
+  ( ParMonad
+  , ParArray
+  , Mutex
+  , newMutex
+  , withMutex
+  , modifyMutex
+  , modifyMutex_
+  , readMutex
+  , PrimPar
   , runPrimPar
   , ReadPar
   , runReadPar
-  , ParMonad
   , ParEvalErr (..)
   , parEval
   , parEvalInc
   )
 where
 
-import Control.Concurrent.MVar (modifyMVar, newMVar, takeMVar, withMVar)
 import Control.DeepSeq (NFData (..))
 import Control.Exception (Exception)
 import Control.Monad (when)
-import Control.Monad.IO.Class (MonadIO (..))
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Par ()
 import Control.Monad.Par.Class (ParFuture (..), ParIVar (..))
 import Control.Monad.Par.IO (ParIO)
@@ -26,13 +32,48 @@ import Data.Foldable (for_, toList)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromJust)
+import Data.Primitive.MVar (MVar, newMVar, putMVar, readMVar, takeMVar)
+import Data.Primitive.PrimArray (MutablePrimArray)
 import Data.Set (Set)
 import Data.Traversable (for)
 import Data.Typeable (Typeable)
 import GHC.IO (IO (..))
 
+type ParMonad m = (PrimMonad m, PrimState m ~ RealWorld, ParFuture IVar m, ParIVar IVar m)
+
+type ParArray = MutablePrimArray RealWorld
+
+newtype Mutex a = Mutex {unMutex :: MVar RealWorld a}
+  deriving stock (Eq)
+
+newMutex :: (ParMonad m) => a -> m (Mutex a)
+newMutex = fmap Mutex . newMVar
+
+withMutex :: (ParMonad m) => Mutex a -> (a -> m b) -> m b
+withMutex (Mutex var) f = do
+  a <- takeMVar var
+  b <- f a
+  putMVar var a
+  pure b
+
+modifyMutex :: (ParMonad m) => Mutex a -> (a -> m (a, b)) -> m b
+modifyMutex (Mutex var) f = do
+  a <- takeMVar var
+  (a', b) <- f a
+  putMVar var a'
+  pure b
+
+modifyMutex_ :: (ParMonad m) => Mutex a -> (a -> m a) -> m ()
+modifyMutex_ (Mutex var) f = do
+  a <- takeMVar var
+  a' <- f a
+  putMVar var a'
+
+readMutex :: (ParMonad m) => Mutex a -> m a
+readMutex (Mutex var) = readMVar var
+
 newtype PrimPar a = PrimPar {unPrimPar :: ParIO a}
-  deriving newtype (Functor, Applicative, Monad, MonadIO, ParFuture IVar, ParIVar IVar)
+  deriving newtype (Functor, Applicative, Monad, ParFuture IVar, ParIVar IVar)
 
 runPrimPar :: PrimPar a -> IO a
 runPrimPar = PIO.runParIO . unPrimPar
@@ -41,11 +82,8 @@ instance PrimMonad PrimPar where
   type PrimState PrimPar = RealWorld
   primitive f = PrimPar (liftIO (IO f))
 
-instance MonadFail PrimPar where
-  fail = liftIO . fail
-
 newtype ReadPar r a = ReadPar {unReadPar :: ReaderT r PrimPar a}
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadFail, MonadReader r)
+  deriving newtype (Functor, Applicative, Monad, MonadReader r)
 
 runReadPar :: ReadPar r a -> r -> IO a
 runReadPar m = runPrimPar . runReaderT (unReadPar m)
@@ -62,8 +100,6 @@ instance ParIVar IVar (ReadPar r) where
 instance PrimMonad (ReadPar r) where
   type PrimState (ReadPar r) = RealWorld
   primitive f = ReadPar $ ReaderT $ const $ primitive f
-
-type ParMonad m = (MonadIO m, PrimMonad m, ParFuture IVar m, ParIVar IVar m)
 
 newtype ParEvalErr k = ParEvalErr k
   deriving stock (Eq, Ord, Show)
@@ -97,9 +133,9 @@ parEvalInc getDef getDeps mkVal root startVals = goTop
   goTop = do
     errVar <- new
     startVars <- traverse (newFull . Just) startVals
-    envVar <- liftIO (newMVar (Env True startVars))
+    envVar <- newMutex (Env True startVars)
     rootVal <- goFork errVar envVar root >>= get
-    env <- liftIO (takeMVar envVar)
+    env <- readMutex envVar
     if envOk env
       then do
         pairs <- traverse (\(k, i) -> fmap ((k,) . fromJust) (get i)) (Map.toList (envVars env))
@@ -107,7 +143,7 @@ parEvalInc getDef getDeps mkVal root startVals = goTop
       else fmap Left (get errVar)
   goFork errVar envVar k = do
     resVar <- new
-    (shouldFork, resVar') <- liftIO $ modifyMVar envVar $ \env ->
+    (shouldFork, resVar') <- modifyMutex envVar $ \env ->
       pure $
         if envOk env
           then case Map.lookup k (envVars env) of
@@ -121,7 +157,7 @@ parEvalInc getDef getDeps mkVal root startVals = goTop
   goSub errVar envVar k = do
     res <- case getDef k of
       Nothing -> do
-        shouldPut <- liftIO $ modifyMVar envVar $ \env ->
+        shouldPut <- modifyMutex envVar $ \env ->
           pure (env {envOk = False}, envOk env)
         when shouldPut (put_ errVar (ParEvalErr k))
         pure Nothing
@@ -129,10 +165,10 @@ parEvalInc getDef getDeps mkVal root startVals = goTop
         let ks = getDeps x
         vars <- for (toList ks) (goFork errVar envVar)
         for_ vars get
-        shouldMk <- liftIO (withMVar envVar (pure . envOk))
+        shouldMk <- withMutex envVar (pure . envOk)
         if shouldMk
           then fmap Just (goMk envVar x)
           else pure Nothing
-    resVar <- liftIO (withMVar envVar (pure . (Map.! k) . envVars))
+    resVar <- withMutex envVar (pure . (Map.! k) . envVars)
     put resVar res
-  goMk envVar = mkVal (\k -> fmap fromJust (get =<< liftIO (withMVar envVar (pure . (Map.! k) . envVars))))
+  goMk envVar = mkVal (\k -> fmap fromJust (get =<< withMutex envVar (pure . (Map.! k) . envVars)))
