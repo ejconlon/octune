@@ -528,7 +528,12 @@ orShift c rsamp = Samples (\arc -> runSamples rsamp (arcShift arc (negate c)))
 
 orConcat :: Rate -> Seq (Anno Extent Samples) -> Samples
 orConcat rate rs =
-  let (tot, subArcs) = foldl' (\(t, a) (Anno l g) -> let e = addDelta t (extentLen l) in (e, a :|> (Arc t e, g))) (0, Empty) rs
+  let gather (d, t, a) (Anno l g) =
+        let q = extentLen l
+            d' = d + q
+            t' = addDelta t q
+        in  (d', t', a :|> (d, Arc t t', g))
+      (_, tot, subArcs) = foldl' gather (0, 0, Empty) rs
       whole = Arc 0 tot
   in  Samples $ \arc@(Arc s e) ->
         let elemLen = arcLen @ElemCount (quantize rate arc)
@@ -539,11 +544,12 @@ orConcat rate rs =
                     postSamps = arrEmpty rate (Arc fe e)
                     gen !samps = \case
                       Empty -> samps
-                      (subArc, subGen) :<| rest -> do
+                      (subDelta, subArc, subGen) :<| rest -> do
                         case arcOverlap filtArc subArc of
                           OverlapLt -> gen samps rest
                           OverlapEq narrowArc ->
-                            let subSamps = runSamples subGen narrowArc
+                            let narrowArc' = arcShift narrowArc subDelta
+                                subSamps = runSamples subGen narrowArc'
                             in  gen (samps :|> subSamps) rest
                           OverlapGt -> samps
                     genSamps = gen Empty subArcs

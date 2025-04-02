@@ -82,18 +82,14 @@ opTests lim =
             op = Fix (OpShift (Delta 2) inner :: TestOpF)
         opAnnoExtentSingle (Rate 1) op
           === Right (MemoP (Extent (Arc (-2) 1)) (OpShift (Delta 2) (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
-        -- TODO fix this
         opRenderSimple (Rate 1) op === Right (isampsFromList [3])
-        pure ()
     , testUnit "opAnnoExtent OpSlice" $ do
         let inSamps = isampsFromList [1, 2, 3, 4, 5, 6]
             inner = Fix (OpSamp inSamps :: TestOpF)
             op = Fix (OpSlice (Reps 2) (Arc 1 3) inner :: TestOpF)
         opAnnoExtentSingle (Rate 1) op
           === Right (MemoP (Extent (Arc 0 4)) (OpSlice (Reps 2) (Arc 1 3) (MemoP (Extent (Arc 0 6)) (OpSamp inSamps))))
-        -- TODO fix this
         opRenderSimple (Rate 1) op === Right (isampsFromList [2, 3, 2, 3])
-        pure ()
     , testUnit "opAnnoExtent OpConcat" $ do
         let inSamps1 = isampsFromList [1, 2, 3]
             inSamps2 = isampsFromList [4, 5, 6]
@@ -110,9 +106,7 @@ opTests lim =
                     )
                 )
             )
-        -- TODO fix this
-        -- opRenderSimple (Rate 1) op === Right (isampsFromList [1, 2, 3, 4, 5, 6])
-        pure ()
+        opRenderSimple (Rate 1) op === Right (isampsFromList [1, 2, 3, 4, 5, 6])
     , testUnit "opAnnoExtent OpMerge" $ do
         let inSamps1 = isampsFromList [1, 2]
             inSamps2 = isampsFromList [4, 5, 6]
