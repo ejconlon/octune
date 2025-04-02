@@ -1,11 +1,15 @@
 module Data.Sounds where
 
 import Bowtie (Anno (..), Fix (..), Memo, cataM, memoKey, mkMemoM, pattern MemoP)
+import Control.Applicative (Alternative (..))
 import Control.DeepSeq (NFData)
-import Control.Monad (unless, when, (>=>))
-import Control.Monad.Primitive (PrimMonad (..))
+import Control.Monad (unless, void, when, (>=>))
+import Control.Monad.Except (ExceptT, MonadError (..), runExceptT)
+import Control.Monad.IO.Class (MonadIO (..))
+import Control.Monad.Primitive (PrimMonad (..), RealWorld)
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.Trans (lift)
+import Control.Monad.Trans.Maybe (MaybeT (..))
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
 import Dahdit.LiftedPrimArray (LiftedPrimArray (..))
@@ -14,7 +18,7 @@ import Data.Foldable (fold, foldl', for_, toList)
 import Data.Functor.Foldable (Recursive (..), cata)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
-import Data.PrimPar (Mutex, ParArray, PrimPar)
+import Data.PrimPar (Mutex, PrimPar, newMutex, runPrimPar, withMutex)
 import Data.Primitive.ByteArray (ByteArray (..))
 import Data.Primitive.PrimArray
   ( MutablePrimArray
@@ -23,6 +27,7 @@ import Data.Primitive.PrimArray
   , copyPrimArray
   , emptyPrimArray
   , generatePrimArray
+  , getSizeofMutablePrimArray
   , indexPrimArray
   , mapPrimArray
   , newPrimArray
@@ -32,6 +37,7 @@ import Data.Primitive.PrimArray
   , runPrimArray
   , setPrimArray
   , sizeofPrimArray
+  , unsafeFreezePrimArray
   , writePrimArray
   )
 import Data.Primitive.Types (Prim)
@@ -542,35 +548,104 @@ opRenderSimple rate op = do
   samps <- opRender rate Left op'
   pure (maybe isampsEmpty (runSamples samps) (extentPosArc (memoKey op')))
 
-newtype MutSamples = MutSamples {runMutSamples :: Arc Time -> Mutex (ParArray Int32) -> PrimPar ()}
+data View z = View
+  { viewBounds :: !(Arc ElemCount)
+  , viewArray :: !z
+  }
+  deriving stock (Eq, Ord, Show)
+
+viewLen :: View z -> ElemCount
+viewLen = arcLen . viewBounds
+
+viewNull :: View z -> Bool
+viewNull = arcNull . viewBounds
+
+-- Return a new view with the start of the view bounds increased by the given amount.
+-- Return empty if the resulting arc is null (zero-length).
+viewSkip :: (Alternative m) => ElemCount -> View z -> m (View z)
+viewSkip skip (View bounds arr) =
+  let newBounds = Arc (arcStart bounds + skip) (arcEnd bounds)
+  in  if arcNull newBounds
+        then empty
+        else pure (View newBounds arr)
+
+-- Narrow to the given sub-bounds or return empty.
+viewNarrow :: (Alternative m) => Arc ElemCount -> View z -> m (View z)
+viewNarrow arc (View bounds arr) =
+  case arcIntersect arc bounds of
+    Just narrowArc -> pure (View narrowArc arr)
+    _ -> empty
+
+type ArrayView a = View (PrimArray a)
+
+avNew :: (Prim a) => PrimArray a -> ArrayView a
+avNew arr = View (Arc 0 (ElemCount (sizeofPrimArray arr))) arr
+
+type MutArrayView s a = View (MutablePrimArray s a)
+
+type ParArrayView a = MutArrayView RealWorld a
+
+type PrimMonadState s m = (PrimMonad m, PrimState m ~ s)
+
+mavNew :: (PrimMonadState s m, Prim a) => MutablePrimArray s a -> m (MutArrayView s a)
+mavNew arr = fmap (\len -> View (Arc 0 (ElemCount len)) arr) (getSizeofMutablePrimArray arr)
+
+mavCopy :: (PrimMonadState s m, Prim a) => MutArrayView s a -> ArrayView a -> m ()
+mavCopy (View darc@(Arc dstart _) darr) (View sarc@(Arc sstart _) sarr) = do
+  let slen = arcLen sarc
+      dlen = arcLen darc
+      len = min slen dlen
+  when
+    (len > 0)
+    (copyPrimArray darr (unElemCount dstart) sarr (unElemCount sstart) (unElemCount len))
+
+newtype MutSamples = MutSamples {runMutSamples :: Arc Time -> Mutex (ParArrayView Int32) -> PrimPar ()}
+
+runMutSamplesSimple :: Rate -> MutSamples -> Arc Time -> IO (PrimArray Int32)
+runMutSamplesSimple rate samps arc = do
+  let elemsLen = arcLen @ElemCount (quantize rate arc)
+  arr <- zeroPrimArray (unElemCount elemsLen)
+  mutView <- mavNew arr
+  runPrimPar $ do
+    bufVar <- newMutex mutView
+    runMutSamples samps arc bufVar
+  unsafeFreezePrimArray arr
 
 ormEmpty :: MutSamples
 ormEmpty = MutSamples (\_ _ -> pure ())
 
 ormSamp :: Rate -> InternalSamples -> MutSamples
 ormSamp rate x =
-  let i = isampsLength x
-  in  if i == 0
+  let src = avNew (unInternalSamples x)
+  in  if viewNull src
         then ormEmpty
-        else MutSamples $ \arc bufVar -> do
-          -- TODO
-          -- withMutex bufVar $ \b -> copyPrimArray b (unElemCount off) src (unElemCount coff) (unElemCount clen)
-          pure ()
+        else MutSamples $ \arc bufVar -> void $ runMaybeT $ do
+          let arc' = quantize rate arc
+          src' <- viewNarrow arc' src
+          lift (withMutex bufVar (`mavCopy` src'))
 
-opRenderMut :: forall m n. (Monad m) => Rate -> (n -> m MutSamples) -> Memo (OpF n) Extent -> m MutSamples
+opRenderMut
+  :: forall e m n. (Monad m) => Rate -> (n -> ExceptT e m MutSamples) -> Memo (OpF n) Extent -> ExceptT e m MutSamples
 opRenderMut rate onRef = goTop
  where
-  goTop :: Memo (OpF n) Extent -> m MutSamples
+  goTop :: Memo (OpF n) Extent -> ExceptT e m MutSamples
   goTop = memoRecallM go
-  go :: OpF n (Anno Extent MutSamples) -> ReaderT Extent m MutSamples
+  go :: OpF n (Anno Extent MutSamples) -> ReaderT Extent (ExceptT e m) MutSamples
   go = \case
     OpEmpty -> pure ormEmpty
     OpSamp x -> pure (ormSamp rate x)
-    OpSlice n (Arc ss se) (Anno rext rsamp) -> undefined
-    OpShift c r -> undefined
-    OpConcat rs -> undefined
-    OpMerge rs -> undefined
+    OpSlice n (Arc ss se) (Anno rext rsamp) -> error "TODO"
+    OpShift c r -> error "TODO"
+    OpConcat rs -> error "TODO"
+    OpMerge rs -> error "TODO"
     OpRef n -> lift (onRef n)
+
+opRenderMutSimple :: Rate -> Op n -> IO (Either n InternalSamples)
+opRenderMutSimple rate op = runExceptT $ do
+  op' <- either throwError pure (opAnnoExtentSingle rate op)
+  samps <- opRenderMut rate throwError op'
+  let marc = extentPosArc (memoKey op')
+  maybe (pure isampsEmpty) (fmap InternalSamples . liftIO . runMutSamplesSimple rate samps) marc
 
 -- opRenderMutSimple :: Rate -> Op n -> Either n (IO InternalSamples)
 -- opRenderMutSimple rate op = do

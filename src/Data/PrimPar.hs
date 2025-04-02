@@ -1,6 +1,5 @@
 module Data.PrimPar
   ( ParMonad
-  , ParArray
   , Mutex
   , newMutex
   , withMutex
@@ -33,15 +32,12 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromJust)
 import Data.Primitive.MVar (MVar, newMVar, putMVar, readMVar, takeMVar)
-import Data.Primitive.PrimArray (MutablePrimArray)
 import Data.Set (Set)
 import Data.Traversable (for)
 import Data.Typeable (Typeable)
 import GHC.IO (IO (..))
 
 type ParMonad m = (PrimMonad m, PrimState m ~ RealWorld, ParFuture IVar m, ParIVar IVar m)
-
-type ParArray = MutablePrimArray RealWorld
 
 newtype Mutex a = Mutex {unMutex :: MVar RealWorld a}
   deriving stock (Eq)
