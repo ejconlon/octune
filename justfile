@@ -95,3 +95,6 @@ sample-gen-event target: clean-profile
 
 clean-profile:
   rm -f octune.hp octune.prof octune.prof.html octune.hp octune.hp.txt octune.eventlog octune.eventlog.html octune.svg
+
+test-pat +pat:
+  {{ stack_build }} --test --ta="--pattern" --ta="\"{{pat}}\""
