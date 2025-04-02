@@ -67,14 +67,18 @@ zeroPrimArray n = do
   pure marr
 
 replicateWholePrimArray :: (Prim a) => Int -> PrimArray a -> PrimArray a
-replicateWholePrimArray n sarr = runPrimArray $ do
-  let srcSize = sizeofPrimArray sarr
-      len = n * srcSize
-  darr <- newPrimArray len
-  for_ [0 .. n - 1] $ \i -> do
-    let pos = i * srcSize
-    copyPrimArray darr pos sarr 0 srcSize
-  pure darr
+replicateWholePrimArray n sarr =
+  if
+    | n <= 0 -> emptyPrimArray
+    | n == 1 -> sarr
+    | otherwise -> runPrimArray $ do
+        let srcSize = sizeofPrimArray sarr
+            len = n * srcSize
+        darr <- newPrimArray len
+        for_ [0 .. n - 1] $ \i -> do
+          let pos = i * srcSize
+          copyPrimArray darr pos sarr 0 srcSize
+        pure darr
 
 concatPrimArray :: (Prim a) => [PrimArray a] -> PrimArray a
 concatPrimArray = \case
@@ -359,6 +363,21 @@ arcOverlap (Arc ns ne) (Arc hs he) =
     | ns >= he -> OverlapGt
     | otherwise -> OverlapEq (Arc (max ns hs) (min ne he))
 
+arcSkip :: (Measure t d) => d -> Arc t -> Maybe (Arc t)
+arcSkip d (Arc bs be) =
+  let s = addDelta bs d
+  in  if s >= be
+        then Nothing
+        else Just (Arc s be)
+
+arcNarrow :: (Measure t d, Num t) => Arc t -> Arc t -> Maybe (Arc t)
+arcNarrow rel@(Arc rs _) base@(Arc bs _) =
+  let s = bs + rs
+      l = min (arcLen rel) (arcLen base)
+  in  if l <= 0
+        then Nothing
+        else Just (arcFrom s l)
+
 data OpF n r
   = OpEmpty
   | OpSamp !InternalSamples
@@ -488,17 +507,21 @@ orSamp rate x =
                       samps = [preSamps, bodySamps, postSamps]
                   in  isampsConcat samps
 
-orSlice :: Rate -> Reps -> Arc Time -> Extent -> Samples -> Samples
-orSlice rate n (Arc ss se) rext rsamp =
-  let sarc' = Arc ss (min se (addDelta ss (extentLen rext)))
-      sarcLen' = arcLen sarc'
-  in  Samples $ \(Arc s e) ->
-        let arc'@(Arc s' e') = Arc (arcStart sarc' + s) (min e (addDelta s sarcLen'))
-            preSamps = arrEmpty rate (Arc s s')
-            postSamps = arrEmpty rate (Arc e' e)
-            bodySamps = runSamples rsamp arc'
-            samps = isampsConcat [preSamps, bodySamps, postSamps]
-        in  isampsReplicate (fromIntegral n) samps
+orSlice :: Rate -> Reps -> Arc Time -> Samples -> Samples
+orSlice rate n sarc rsamp =
+  let len = arcLen sarc
+  in  if arcNull sarc
+        then Samples (arrEmpty rate . flip arcReps n)
+        else Samples $ \arc ->
+          case arcNarrow sarc arc of
+            Nothing -> arrEmpty rate arc
+            Just arc' ->
+              let len' = arcLen arc'
+                  bodySamps = runSamples rsamp arc'
+              in  isampsReplicate (fromIntegral n) $
+                    if len == len'
+                      then bodySamps
+                      else isampsConcat [bodySamps, arrEmpty rate (arcFrom 0 (len - len'))]
 
 orShift :: Delta -> Samples -> Samples
 orShift c rsamp = Samples (\arc -> runSamples rsamp (arcShift arc c))
@@ -536,7 +559,7 @@ opRender rate onRef = goTop
   go = \case
     OpEmpty -> pure (orEmpty rate)
     OpSamp x -> pure (orSamp rate x)
-    OpSlice n arc (Anno rext rsamp) -> pure (orSlice rate n arc rext rsamp)
+    OpSlice n arc r -> pure (orSlice rate n arc (annoVal r))
     OpShift c r -> pure (orShift c (annoVal r))
     OpConcat rs -> pure (orConcat rate rs)
     OpMerge rs -> pure (orMerge (fmap annoVal (toList rs)))
@@ -562,19 +585,12 @@ viewNull = arcNull . viewBounds
 
 -- Return a new view with the start of the view bounds increased by the given amount.
 -- Return empty if the resulting arc is null (zero-length).
-viewSkip :: (Alternative m) => ElemCount -> View z -> m (View z)
-viewSkip skip (View bounds arr) =
-  let newBounds = Arc (arcStart bounds + skip) (arcEnd bounds)
-  in  if arcNull newBounds
-        then empty
-        else pure (View newBounds arr)
+viewSkip :: ElemCount -> View z -> Maybe (View z)
+viewSkip skip (View bounds arr) = fmap (`View` arr) (arcSkip skip bounds)
 
--- Narrow to the given sub-bounds or return empty.
-viewNarrow :: (Alternative m) => Arc ElemCount -> View z -> m (View z)
-viewNarrow arc (View bounds arr) =
-  case arcIntersect arc bounds of
-    Just narrowArc -> pure (View narrowArc arr)
-    _ -> empty
+-- Narrow to the relative sub-bounds or return empty.
+viewNarrow :: Arc ElemCount -> View z -> Maybe (View z)
+viewNarrow rel (View bounds arr) = fmap (`View` arr) (arcNarrow rel bounds)
 
 type ArrayView a = View (PrimArray a)
 
@@ -621,7 +637,7 @@ ormSamp rate x =
         then ormEmpty
         else MutSamples $ \arc bufVar -> void $ runMaybeT $ do
           let arc' = quantize rate arc
-          src' <- viewNarrow arc' src
+          src' <- maybe empty pure (viewNarrow arc' src)
           lift (withMutex bufVar (`mavCopy` src'))
 
 opRenderMut

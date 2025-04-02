@@ -80,20 +80,21 @@ opTests lim =
         let inSamps = isampsFromList [1, 2, 3]
             inner = Fix (OpSamp inSamps :: TestOpF)
             op = Fix (OpShift (Delta 2) inner :: TestOpF)
-        -- TODO Annotate with extents for correct final length
         opAnnoExtentSingle (Rate 1) op
           === Right (MemoP (Extent (Arc (-2) 1)) (OpShift (Delta 2) (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
-    , -- TODO fix this
-      -- opRenderSimple (Rate 1) op === Right (isampsFromList [0, 0, 1, 2, 3])
-      testUnit "opAnnoExtent OpSlice" $ do
+        -- TODO fix this
+        -- opRenderSimple (Rate 1) op === Right (isampsFromList [3])
+        pure ()
+    , testUnit "opAnnoExtent OpSlice" $ do
         let inSamps = isampsFromList [1, 2, 3, 4, 5, 6]
             inner = Fix (OpSamp inSamps :: TestOpF)
             op = Fix (OpSlice (Reps 2) (Arc 1 3) inner :: TestOpF)
         opAnnoExtentSingle (Rate 1) op
           === Right (MemoP (Extent (Arc 0 4)) (OpSlice (Reps 2) (Arc 1 3) (MemoP (Extent (Arc 0 6)) (OpSamp inSamps))))
-    , -- TODO fix this
-      -- opRenderSimple (Rate 1) op === Right (isampsFromList [2, 3, 2, 3])
-      testUnit "opAnnoExtent OpConcat" $ do
+        -- TODO fix this
+        opRenderSimple (Rate 1) op === Right (isampsFromList [2, 3, 2, 3])
+        pure ()
+    , testUnit "opAnnoExtent OpConcat" $ do
         let inSamps1 = isampsFromList [1, 2, 3]
             inSamps2 = isampsFromList [4, 5, 6]
             op1 = Fix (OpSamp inSamps1 :: TestOpF)
@@ -109,9 +110,10 @@ opTests lim =
                     )
                 )
             )
-    , -- TODO fix this
-      -- opRenderSimple (Rate 1) op === Right (isampsFromList [1, 2, 3, 4, 5, 6])
-      testUnit "opAnnoExtent OpMerge" $ do
+        -- TODO fix this
+        -- opRenderSimple (Rate 1) op === Right (isampsFromList [1, 2, 3, 4, 5, 6])
+        pure ()
+    , testUnit "opAnnoExtent OpMerge" $ do
         let inSamps1 = isampsFromList [1, 2]
             inSamps2 = isampsFromList [4, 5, 6]
             op1 = Fix (OpSamp inSamps1 :: TestOpF)
