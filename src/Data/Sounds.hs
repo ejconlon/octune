@@ -503,8 +503,6 @@ opRender rate onRef = goTop
                   Just filtArc@(Arc fs fe) ->
                     let preSamps = arrEmpty (Arc s fs)
                         postSamps = arrEmpty (Arc fe e)
-                        -- Go through (len, gen) pairs of subArcs to find which overlap with filtArc.
-                        -- For each overlap, generate samples, then concatenate them all together
                         gen !samps = \case
                           Empty -> samps
                           (subArc, subGen) :<| rest -> do
@@ -525,359 +523,35 @@ opRenderSimple rate op = do
   samps <- opRender rate Left op'
   pure (maybe isampsEmpty (runSamples samps) (extentPosArc (memoKey op')))
 
--- data ExSamps n = ExSamps
---   { esLen :: !Len
---   , esGen :: !(Extent -> InternalSamples)
---   }
+-- newtype MutSamples = MutSamples {runMutSamples :: Arc Time -> MVar (MutablePrimArray (PrimState PrimPar) Int32) -> PrimPar () }
 
--- opRender :: forall n. (n -> Either n (ExSamps n)) -> Op n -> Either n (ExSamps n)
--- opRender onRef = goTop where
---   goTop = cata go
---   exEmpty = ExSamps ExLenEmpty (\(Extent _ l) -> isampsConstant l 0)
+-- opRenderMut :: (Monad m) => Rate -> (n -> m MutSamples) -> Memo (OpF n) Extent -> m MutSamples
+-- opRenderMut rate onRef = goTop
+--  where
+--   goTop = memoRecallM go
 --   go = \case
---     OpEmpty -> pure exEmpty
---     OpSamp s -> do
---       let i = isampsLength s
---       if i == 0
---         then pure exEmpty
---         else do
---           let meas = ExLenFixed i
---               gen (Extent o l) =
---                 let l' = max 0 (min l (i - o))
---                 in if l' == 0
---                   then isampsConstant l 0
---                   else
---                     let s' = isampsTrim o l' s
---                     in if l' == l
---                       then s'
---                       else isampsConcat [s', isampsConstant (l - l') 0]
---           pure (ExSamps meas gen)
---     OpBound b r -> do
---       ExSamps rmeas rgen <- r
---       let meas = case rmeas of
---             ExLenEmpty -> ExLenEmpty
---             _ -> ExLenFixed b
---           gen (Extent o l) =
---             let l' = case rmeas of
---                   ExLenEmpty -> 0
---                   ExLenRepeat -> b
---                   ExLenFixed i -> max 0 (min i (b - o))
---             in if l' == 0
---               then isampsConstant l 0
---               else
---                 let z = rgen (Extent o l')
---                 in if l' == l
---                   then z
---                   else isampsConcat [z, isampsConstant (l - l') 0]
---       pure (ExSamps meas gen)
---     -- OpSkip c r -> do
---     --   ExSamps rmeas rgen <- r
---     --   let meas = fmap (max 0 . subtract c) rmeas
---     --       gen (Extent o l) = rgen (Extent (o + c) l)
---     --   pure $ ExSamps meas gen
---     -- OpRepeat r -> do
---     --   ExSamps rmeas rgen <- r
---     --   let meas = case rmeas of
---     --         Just 0 -> Just 0
---     --         _ -> Nothing
---     --       gen ex@(Extent o l) = undefined
---     --         -- let m = rmeas ex
---     --         -- in if m == 0
---     --         --   then isampsConstant l 0
---     --         --   else
---     --         --     let z = rgen (Extent o l')
---     --   pure (ExSamps meas gen)
---     --   es@(ExSamps mi f) <- r
---     --   case mi of
---     --     Nothing -> pure es
---     --     Just i ->
---     --       if i <= 0
---     --         then go OpEmpty
---     --         else pure $ ExSamps Nothing $ \(Extent o l) ->
---     --           error "TODO"
---     -- OpReplicate n r -> do
---     --   ExSamps f <- r
---     --   pure $ ExSamps $ \(Extent o l) ->
---     --     error "TODO"
---     OpConcat rs -> do
---       qs <- sequence rs
---       let meas ex@(Extent _ l) = min l (sum (fmap (`esMeas` ex) (toList qs)))
---           gen (Extent o l) = undefined
---       pure (ExSamps meas gen)
---     OpMerge rs -> do
---       qs <- sequence rs
---       let meas ex@(Extent _ l) = min l (maximum (fmap (`esMeas` ex) (toList qs)))
---           gen (Extent o l) = undefined
---       pure (ExSamps meas gen)
---     OpRef n -> onRef n
---     _ -> undefined
+--     OpEmpty -> undefined
+--     OpSamp x -> undefined
+--     OpSlice n (Arc ss se) (Anno rext rsamp) -> undefined
+--     OpShift c r -> undefined
+--     OpConcat rs -> undefined
+--     OpMerge rs -> undefined
+--     OpRef n -> lift (onRef n)
 
--- data Op2F n r
---   = Op2Empty
---   | Op2Samp !Extent !InternalSamples
---   | Op2Replicate !Int r
---   | Op2Concat !(Seq r)
---   | Op2Merge !(Seq r)
---   | Op2Ref !Extent !n
---   deriving stock (Eq, Show, Functor, Foldable, Traversable)
-
--- data ValErr n
---   = -- | Expected length, actual sum of child lengths
---     ValErrChildLen !ElemCount !ElemCount
---   | -- | Expected length, actual extent length
---     ValErrExtentLen !ElemCount !ElemCount
---   | -- | Non-zero length for Op2Empty
---     ValErrEmptyLen !ElemCount
---   | -- | Negative offset in extent
---     ValErrNegativeExtentOffset !ElemCount
---   | -- | Negative length in extent
---     ValErrNegativeExtentLength !ElemCount
---   | -- | Non-positive number of repetitions
---     ValErrNonPositiveReps !Int
---   | -- | No children in Op2Concat or Op2Merge
---     ValErrNoChildren
---   | -- | Reference not found
---     ValErrRef !n
---   deriving stock (Eq, Show)
-
--- op2Validate :: (n -> Bool) -> Op2Anno n -> Either (ValErr n) ()
--- op2Validate onRef = runExcept . go
---  where
---   go (MemoP totLen op) = case op of
---     Op2Empty ->
---       unless (totLen == 0) $ throwError (ValErrEmptyLen totLen)
---     Op2Samp (Extent off len) _ -> do
---       unless (off >= 0) $ throwError (ValErrNegativeExtentOffset off)
---       unless (len >= 0) $ throwError (ValErrNegativeExtentLength len)
---       unless (totLen == len) $ throwError (ValErrExtentLen totLen len)
---     Op2Replicate n r -> do
---       go r
---       -- TODO throw error on single rep
---       unless (n > 0) $ throwError (ValErrNonPositiveReps n)
---       let MemoP rLen _ = r
---           childSum = rLen * ElemCount n
---       unless (childSum <= totLen) $ throwError (ValErrChildLen totLen childSum)
---     Op2Concat rs -> do
---       traverse_ go rs
---       when (Seq.null rs) $ throwError ValErrNoChildren
---       let childSum = sum (fmap memoKey rs)
---       unless (childSum <= totLen) $ throwError (ValErrChildLen totLen childSum)
---     Op2Merge rs -> do
---       traverse_ go rs
---       when (Seq.null rs) $ throwError ValErrNoChildren
---       let childSum = maximum (fmap memoKey rs)
---       unless (childSum <= totLen) $ throwError (ValErrChildLen totLen childSum)
---     Op2Ref (Extent off len) n -> do
---       unless (off >= 0) $ throwError (ValErrNegativeExtentOffset off)
---       unless (len >= 0) $ throwError (ValErrNegativeExtentLength len)
---       unless (totLen == len) $ throwError (ValErrExtentLen totLen len)
---       unless (onRef n) $ throwError (ValErrRef n)
-
--- type Op2Anno n = Memo (Op2F n) ElemCount
-
--- op2Empty :: Op2Anno n
--- op2Empty = MemoP 0 Op2Empty
-
--- op2Null :: Op2Anno n -> Bool
--- op2Null = \case
---   MemoP _ Op2Empty -> True
---   MemoP len _ -> len <= 0
-
--- op2NullNorm :: Op2Anno n -> Op2Anno n
--- op2NullNorm = \case
---   an@(MemoP _ Op2Empty) -> an
---   MemoP len _ | len <= 0 -> op2Empty
---   an -> an
-
--- type LenM n = ReaderT (Map n (Maybe ElemCount)) (State (Map n Extent))
-
--- runLenM :: Map n (Maybe ElemCount) -> Map n Extent -> LenM n a -> (a, Map n Extent)
--- runLenM r s m = runState (runReaderT m r) s
-
--- -- Given available length and original definition,
--- -- Returns (calculated length, annotated translation).
--- -- Properties:
--- -- 1. If it's possible to infer a length, it will be GTE the calculated length.
--- -- 2. The calculated length will be LTE available length.
--- opAnnoLen :: (Ord n) => Extent -> Op n -> LenM n (Op2Anno n)
--- opAnnoLen = go
---  where
---   go ext op =
---     if extNull ext
---       then pure op2Empty
---       else fmap op2NullNorm (goOp ext op)
---   goOp haveExt@(Extent haveOff haveLen) (Fix opf) = case opf of
---     OpEmpty -> pure op2Empty
---     OpSamp s ->
---       let len' = min haveLen (isampsLength s - haveOff)
---       in  pure (MemoP len' (Op2Samp (Extent haveOff len') s))
---     OpBound include r -> do
---       let len' = min haveLen include
---       r' <- go (Extent haveOff len') r
---       let MemoP len'' f = r'
---       pure (MemoP len' (if len'' == len' then f else Op2Concat (r' :<| Empty)))
---     OpSkip exclude r ->
---       let len' = max 0 (haveLen - exclude)
---       in  go (Extent (haveOff + exclude) len') r
---     OpRepeat r -> do
---       r' <- go (Extent 0 (haveLen + haveOff)) r
---       let MemoP len' _ = r'
---       if len' <= 0
---         then pure op2Empty
---         else do
---           let preOff = mod haveOff len'
---               preLen = if preOff > 0 then len' - preOff else 0
---               (numBody, postLen) = divMod (haveLen - preLen) len'
---               bodyLen = len' * numBody
---               body = if bodyLen > 0 then Just (MemoP bodyLen (Op2Replicate (unElemCount numBody) r')) else Nothing
---           pre <-
---             if preLen > 0
---               then fmap (\x -> if op2Null x then Nothing else Just x) (go (Extent preOff preLen) r)
---               else pure Nothing
---           post <-
---             if postLen > 0
---               then fmap (\x -> if op2Null x then Nothing else Just x) (go (Extent 0 postLen) r)
---               else pure Nothing
---           let qs = maybe Empty Seq.singleton pre <> maybe Empty Seq.singleton body <> maybe Empty Seq.singleton post
---               qsLen = maybe 0 memoKey pre + bodyLen + maybe 0 memoKey post
---           case qs of
---             Empty -> pure op2Empty
---             q :<| Empty -> pure q
---             _ -> pure (MemoP qsLen (Op2Concat qs))
---     OpReplicate n r -> do
---       r' <- go (Extent 0 (haveLen + haveOff)) r
---       let MemoP len' _ = r'
---       if len' <= 0
---         then pure op2Empty
---         else do
---           let (ElemCount numPre, preOff) = divMod haveOff len'
---               preLen = if preOff > 0 then len' - preOff else 0
---               numFull = unElemCount (div (haveLen + haveOff) len')
---               numBody = min n numFull - numPre
---               bodyLen = len' * ElemCount numBody
---               postLen = if numBody < n then haveLen - (preLen + bodyLen) else 0
---               body = if bodyLen > 0 then Just (MemoP bodyLen (Op2Replicate numBody r')) else Nothing
---           pre <-
---             if preLen > 0
---               then fmap (\x -> if op2Null x then Nothing else Just x) (go (Extent preOff preLen) r)
---               else pure Nothing
---           post <-
---             if postLen > 0
---               then fmap (\x -> if op2Null x then Nothing else Just x) (go (Extent 0 postLen) r)
---               else pure Nothing
---           let qs = maybe Empty Seq.singleton pre <> maybe Empty Seq.singleton body <> maybe Empty Seq.singleton post
---               qsLen = maybe 0 memoKey pre + bodyLen + maybe 0 memoKey post
---           case qs of
---             Empty -> pure op2Empty
---             q :<| Empty -> pure q
---             _ -> pure (MemoP qsLen (Op2Concat qs))
---     OpConcat rs -> do
---       let process !tot !qs = \case
---             Empty -> pure (MemoP tot (Op2Concat qs))
---             p :<| ps -> do
---               let left = haveLen - tot
---               if left > 0
---                 then do
---                   q <- go (Extent 0 left) p
---                   let MemoP len _ = q
---                   process (tot + len) (qs :|> q) ps
---                 else pure (MemoP tot (Op2Concat qs))
---       if haveOff == 0
---         then process 0 Empty rs
---         else do
---           -- Find the subtree containing our offset
---           let findOffset !tot = \case
---                 Empty -> pure (0, Nothing, Empty)
---                 p :<| ps -> do
---                   -- Calculate length of subtree without offset
---                   q <- go (Extent 0 (haveLen + haveOff - tot)) p
---                   let MemoP len _ = q
---                   if tot + len <= haveOff
---                     then findOffset (tot + len) ps
---                     else do
---                       -- Found the subtree containing our offset
---                       let subOffset = haveOff - tot
---                       q' <- go (Extent subOffset haveLen) p
---                       let MemoP len' _ = q'
---                       pure (len', Just q', ps)
---           (tot, partial, rest) <- findOffset 0 rs
---           process tot (maybe Empty Seq.singleton partial) rest
---     OpMerge rs -> do
---       ps <- fmap (Seq.filter (not . op2Null)) (traverse (go haveExt) rs)
---       case ps of
---         Empty -> pure op2Empty
---         p :<| Empty -> pure p
---         _ -> do
---           let maxLen = maximum (fmap memoKey (toList ps))
---           pure (MemoP maxLen (Op2Merge ps))
---     OpRef n -> do
---       mx <- asks (join . Map.lookup n)
---       len' <- case mx of
---         Just x -> pure (max 0 (min x (haveLen + haveOff) - haveOff))
---         Nothing -> haveLen <$ modify' (Map.alter (Just . maybe haveExt (<> haveExt)) n)
---       pure (MemoP len' (Op2Ref (Extent haveOff len') n))
-
--- data AnnoErr n
---   = AnnoErrTopo !(TopoErr n)
---   | AnnoErrOrphan !n
---   deriving stock (Eq, Ord, Show)
-
--- instance (Show n, Typeable n) => Exception (AnnoErr n)
-
--- data AnnoSt n = AnnoSt
---   { asSpaceNeed :: !(Map n Extent)
---   , asAnnoOps :: !(Map n (Op2Anno n))
---   }
-
--- type AnnoM n = ReaderT (Map n (Maybe ElemCount)) (StateT (AnnoSt n) (Except (AnnoErr n)))
-
--- execAnnoM
---   :: Map n (Maybe ElemCount)
---   -> Map n Extent
---   -> Map n (Op2Anno n)
---   -> AnnoM n ()
---   -> Either (AnnoErr n) (Map n (Op2Anno n))
--- execAnnoM r s1 s2 m = fmap asAnnoOps (runExcept (execStateT (runReaderT m r) (AnnoSt s1 s2)))
-
--- lenToAnnoM :: LenM n a -> AnnoM n a
--- lenToAnnoM m = do
---   r <- ask
---   s <- gets asSpaceNeed
---   let (a, s') = runLenM r s m
---   modify' (\as -> as {asSpaceNeed = s'})
---   pure a
-
--- -- | Annotate all ops with lengths, inferring bottom-up then top-down.
--- opAnnoLenTopo
---   :: forall n. (Ord n) => Map n (Op n) -> Map n (Maybe ElemCount) -> Either (AnnoErr n) (Map n (Op2Anno n))
--- opAnnoLenTopo m n = execAnnoM n Map.empty Map.empty $ do
---   let calc k val = do
---         let op = m Map.! k
---         anno <- lenToAnnoM (opAnnoLen val op)
---         modify' (\as -> as {asAnnoOps = Map.insert k anno (asAnnoOps as)})
---   -- Calculate reverse topo order (top down)
---   ks <-
---     either
---       (throwError . AnnoErrTopo)
---       (pure . Seq.reverse)
---       (topoSort (fmap opRefs . flip Map.lookup m) (Map.keys m))
---   -- First round - if it has an inferred len, annotate.
---   for_ ks $ \k -> do
---     minf <- asks (join . Map.lookup k)
---     for_ minf (calc k . Extent 0)
---   -- Second round - if found a new len, annotate. Otherwise fail.
---   for_ ks $ \k -> do
---     minf <- asks (join . Map.lookup k)
---     case minf of
---       Just _ -> pure ()
---       Nothing -> do
---         mfound <- gets (Map.lookup k . asSpaceNeed)
---         case mfound of
---           Nothing -> throwError (AnnoErrOrphan k)
---           Just found -> calc k found
+-- opRenderMutSimple :: Rate -> Op n -> Either n (IO InternalSamples)
+-- opRenderMutSimple rate op = do
+--   op' <- opAnnoExtentSingle rate op
+--   samps <- opRenderMut rate Left op'
+--   pure $ case extentPosArc (memoKey op') of
+--     Nothing -> pure isampsEmpty
+--     Just whole -> do
+--       let elemsLen = arcLen @ElemCount (quantize rate whole)
+--       arr <- zeroPrimArray (unElemCount elemsLen)
+--       runPrimPar (runMutSamples samps whole arr)
+--       fmap InternalSamples (unsafeFreezePrimArray arr)
 
 -- data OpEnv n = OpEnv
---   { oeDefs :: !(Map n (Op2Anno n))
+--   { oeDefs :: !(Map n (Memo (OpF n) Extent))
 --   , oeFutVar :: !(MVar (Map n (IVar (PrimArray Int32))))
 --   , oeOff :: !ElemCount
 --   , oeBufVar :: !(MVar (MutablePrimArray RealWorld Int32))
@@ -886,7 +560,7 @@ opRenderSimple rate op = do
 
 -- type OpM n = ReadPar (OpEnv n)
 
--- execOpM :: Map n (Op2Anno n) -> ElemCount -> OpM n () -> IO (PrimArray Int32)
+-- execOpM :: Map n (Memo (OpF n) Extent) -> ElemCount -> OpM n () -> IO (PrimArray Int32)
 -- execOpM defs len act = do
 --   buf <- newPrimArray (unElemCount len)
 --   bufVar <- newMVar buf

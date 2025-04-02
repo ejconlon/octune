@@ -101,13 +101,6 @@ topoSort findRefs = fmap fst . runSortM (goGather Empty) . initSortSt
       Nothing -> pure acc
       Just k -> goGather (acc :|> k)
 
--- data EvalErr k e =
---     EvalErrSort !(SortErr k)
---   | EvalErrEmbed !e
---   deriving stock (Eq, Ord, Show)
-
--- instance (Show k, Typeable k, Show e, Typeable e) => Exception (EvalErr k e)
-
 topoEval :: (Ord k) => (v -> Set k) -> Map k v -> ((k -> w) -> v -> w) -> Either (SortErr k) (Map k w)
 topoEval findValRefs m f = fmap (flip execState Map.empty . go) (topoSort findRefs (Map.keys m))
  where
@@ -120,21 +113,6 @@ topoEval findValRefs m f = fmap (flip execState Map.empty . go) (topoSort findRe
         Just v -> do
           modify' (\c -> Map.insert k (f (c Map.!) v) c)
           go ks
-
--- topoEvalM :: (Monad m, Ord k) => (v -> Set k) -> Map k v -> ((k -> m w) -> v -> m w) -> m (Either (SortErr k) (Map k w))
--- topoEvalM = undefined
-
--- topoEvalE :: (Ord k) => (v -> Set k) -> Map k v -> ((k -> Either e w) -> v -> Either e w) -> Either (EvalErr k e) (Map k w)
--- topoEvalE = undefined
-
--- topoEvalEM :: (Monad m, Ord k) => (v -> Set k) -> Map k v -> ((k -> ExceptT e m w) -> v -> ExceptT e m w) -> m (Either (EvalErr k e) (Map k w))
--- topoEvalEM = undefined
-
--- topoAnno :: (Ord k, Base v ~ f, Traversable f) => (v -> Set k) -> Map k v -> ((k -> w) -> v -> w) -> Either (SortErr k) (Map k (Memo f w))
--- topoAnno = undefined
-
--- topoAnnoM :: (Monad m, Ord k, Base v ~ f, Traversable f) => (v -> Set k) -> Map k v -> ((k -> m w) -> v -> m w) -> m (Either (SortErr k) (Map k (Memo f w)))
--- topoAnnoM = undefined
 
 topoAnnoM
   :: (Monad m, Ord k, Recursive v, Base v ~ f, Traversable f)

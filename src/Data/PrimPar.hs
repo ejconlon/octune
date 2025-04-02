@@ -3,9 +3,17 @@ module Data.PrimPar
   , runPrimPar
   , ReadPar
   , runReadPar
+  , ParMonad
+  , ParEvalErr (..)
+  , parEval
+  , parEvalInc
   )
 where
 
+import Control.Concurrent.MVar (modifyMVar, newMVar, takeMVar, withMVar)
+import Control.DeepSeq (NFData (..))
+import Control.Exception (Exception)
+import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO (..))
 import Control.Monad.Par ()
 import Control.Monad.Par.Class (ParFuture (..), ParIVar (..))
@@ -14,6 +22,13 @@ import Control.Monad.Par.IO qualified as PIO
 import Control.Monad.Par.Scheds.TraceInternal (IVar)
 import Control.Monad.Primitive (PrimMonad (..), RealWorld)
 import Control.Monad.Reader (MonadReader, ReaderT (..))
+import Data.Foldable (for_, toList)
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
+import Data.Maybe (fromJust)
+import Data.Set (Set)
+import Data.Traversable (for)
+import Data.Typeable (Typeable)
 import GHC.IO (IO (..))
 
 newtype PrimPar a = PrimPar {unPrimPar :: ParIO a}
@@ -36,10 +51,7 @@ runReadPar :: ReadPar r a -> r -> IO a
 runReadPar m = runPrimPar . runReaderT (unReadPar m)
 
 instance ParFuture IVar (ReadPar r) where
-  -- spawn_ :: ReadPar r a -> ReadPar r (IVar a)
   spawn_ m = ReadPar (ReaderT (spawn_ . runReaderT (unReadPar m)))
-
-  -- get :: IVar a -> ReadPar r a
   get = ReadPar . ReaderT . const . get
 
 instance ParIVar IVar (ReadPar r) where
@@ -50,3 +62,77 @@ instance ParIVar IVar (ReadPar r) where
 instance PrimMonad (ReadPar r) where
   type PrimState (ReadPar r) = RealWorld
   primitive f = ReadPar $ ReaderT $ const $ primitive f
+
+type ParMonad m = (MonadIO m, PrimMonad m, ParFuture IVar m, ParIVar IVar m)
+
+newtype ParEvalErr k = ParEvalErr k
+  deriving stock (Eq, Ord, Show)
+
+instance (Show k, Typeable k) => Exception (ParEvalErr k)
+
+data Env k v = Env
+  { envOk :: !Bool
+  , envVars :: !(Map k (IVar (Maybe v)))
+  }
+
+parEval
+  :: (ParMonad m, Ord k, NFData v)
+  => (k -> Maybe x)
+  -> (x -> Set k)
+  -> ((k -> m v) -> x -> m v)
+  -> k
+  -> m (Either (ParEvalErr k) v)
+parEval getDef getDeps mkVal root = fmap (fmap fst) (parEvalInc getDef getDeps mkVal root Map.empty)
+
+parEvalInc
+  :: (ParMonad m, Ord k, NFData v)
+  => (k -> Maybe x)
+  -> (x -> Set k)
+  -> ((k -> m v) -> x -> m v)
+  -> k
+  -> Map k v
+  -> m (Either (ParEvalErr k) (v, Map k v))
+parEvalInc getDef getDeps mkVal root startVals = goTop
+ where
+  goTop = do
+    errVar <- new
+    startVars <- traverse (newFull . Just) startVals
+    envVar <- liftIO (newMVar (Env True startVars))
+    rootVal <- goFork errVar envVar root >>= get
+    env <- liftIO (takeMVar envVar)
+    if envOk env
+      then do
+        pairs <- traverse (\(k, i) -> fmap ((k,) . fromJust) (get i)) (Map.toList (envVars env))
+        pure (Right (fromJust rootVal, Map.fromList pairs))
+      else fmap Left (get errVar)
+  goFork errVar envVar k = do
+    resVar <- new
+    (shouldFork, resVar') <- liftIO $ modifyMVar envVar $ \env ->
+      pure $
+        if envOk env
+          then case Map.lookup k (envVars env) of
+            Nothing -> (env {envVars = Map.insert k resVar (envVars env)}, (True, resVar))
+            Just resVar' -> (env, (False, resVar'))
+          else (env, (False, resVar))
+    if shouldFork
+      then fork (goSub errVar envVar k)
+      else put resVar Nothing
+    pure resVar'
+  goSub errVar envVar k = do
+    res <- case getDef k of
+      Nothing -> do
+        shouldPut <- liftIO $ modifyMVar envVar $ \env ->
+          pure (env {envOk = False}, envOk env)
+        when shouldPut (put_ errVar (ParEvalErr k))
+        pure Nothing
+      Just x -> do
+        let ks = getDeps x
+        vars <- for (toList ks) (goFork errVar envVar)
+        for_ vars get
+        shouldMk <- liftIO (withMVar envVar (pure . envOk))
+        if shouldMk
+          then fmap Just (goMk envVar x)
+          else pure Nothing
+    resVar <- liftIO (withMVar envVar (pure . (Map.! k) . envVars))
+    put resVar res
+  goMk envVar = mkVal (\k -> fmap fromJust (get =<< liftIO (withMVar envVar (pure . (Map.! k) . envVars))))
