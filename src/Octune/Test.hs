@@ -83,7 +83,7 @@ opTests lim =
         opAnnoExtentSingle (Rate 1) op
           === Right (MemoP (Extent (Arc (-2) 1)) (OpShift (Delta 2) (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
         -- TODO fix this
-        -- opRenderSimple (Rate 1) op === Right (isampsFromList [3])
+        opRenderSimple (Rate 1) op === Right (isampsFromList [3])
         pure ()
     , testUnit "opAnnoExtent OpSlice" $ do
         let inSamps = isampsFromList [1, 2, 3, 4, 5, 6]

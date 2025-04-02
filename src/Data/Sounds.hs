@@ -524,7 +524,7 @@ orSlice rate n sarc rsamp =
                       else isampsConcat [bodySamps, arrEmpty rate (arcFrom 0 (len - len'))]
 
 orShift :: Delta -> Samples -> Samples
-orShift c rsamp = Samples (\arc -> runSamples rsamp (arcShift arc c))
+orShift c rsamp = Samples (\arc -> runSamples rsamp (arcShift arc (negate c)))
 
 orConcat :: Rate -> Seq (Anno Extent Samples) -> Samples
 orConcat rate rs =
