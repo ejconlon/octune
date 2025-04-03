@@ -1,11 +1,12 @@
 module Data.Sounds where
 
-import Bowtie (Anno (..), Fix (..), Memo, cataM, memoKey, mkMemoM, pattern MemoP)
+import Bowtie (Anno (..), Fix (..), Memo, cataM, memoFix, memoKey, mkMemoM, pattern MemoP)
 import Control.Applicative (Alternative (..))
 import Control.DeepSeq (NFData)
 import Control.Monad (unless, void, when, (>=>))
 import Control.Monad.Except (ExceptT, MonadError (..), runExceptT)
 import Control.Monad.IO.Class (MonadIO (..))
+import Control.Monad.Identity (Identity (..))
 import Control.Monad.Primitive (PrimMonad (..), RealWorld)
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.Trans (lift)
@@ -395,6 +396,9 @@ opRefs = cata $ \case
   OpRef n -> Set.singleton n
   op -> fold op
 
+opAnnoRefs :: (Ord n) => Memo (OpF n) a -> Set n
+opAnnoRefs = opRefs . memoFix
+
 newtype Extent = Extent {unExtent :: Arc Time}
   deriving stock (Eq, Ord, Show)
 
@@ -570,6 +574,9 @@ opRender rate onRef = goTop
     OpConcat rs -> pure (orConcat rate rs)
     OpMerge rs -> pure (orMerge (fmap annoVal (toList rs)))
     OpRef n -> lift (onRef n)
+
+opRenderTopo :: (Ord n) => Rate -> Map n (Memo (OpF n) Extent) -> Either (SortErr n) (Map n Samples)
+opRenderTopo rate m = fmap (fmap runIdentity) (topoEval opAnnoRefs m (opRender rate))
 
 opRenderSimple :: Rate -> Op n -> Either n InternalSamples
 opRenderSimple rate op = do

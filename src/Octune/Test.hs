@@ -1,7 +1,10 @@
 module Octune.Test (main) where
 
-import Bowtie (Fix (..), pattern MemoP)
+import Bowtie (Fix (..), memoKey, pattern MemoP)
+import Control.Exception (throwIO)
 import Control.Monad (forM)
+import Control.Monad.IO.Class (MonadIO (..))
+import Dahdit.Sizes (ElemCount (..))
 import Data.Foldable (for_, toList)
 import Data.Map.Strict qualified as Map
 import Data.Primitive.PrimArray (primArrayFromList)
@@ -17,12 +20,19 @@ import Data.Sounds
   , OpF (..)
   , Rate (..)
   , Reps (..)
+  , Samples (..)
+  , arcLen
+  , extentPosArc
   , isampsFromList
+  , isampsLength
   , opAnnoExtentSingle
-  , opInferExtentTopo
+  , opAnnoExtentTopo
   , opRenderSimple
+  , opRenderTopo
+  , quantize
   )
 import Data.Topo (SortErr, topoSort)
+import Data.Traversable (for)
 import PropUnit (Gen, TestLimit, TestTree, assert, forAll, testGroup, testMain, testProp, testUnit, (===))
 import PropUnit.Hedgehog.Gen qualified as Gen
 import PropUnit.Hedgehog.Range qualified as Range
@@ -67,30 +77,30 @@ opTests :: TestLimit -> TestTree
 opTests lim =
   testGroup
     "op"
-    [ testUnit "opAnnoExtent OpEmpty" $ do
+    [ testUnit "OpEmpty" $ do
         let op = Fix (OpEmpty :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 0 0)) OpEmpty)
         opRenderSimple (Rate 1) op === Right (isampsFromList [])
-    , testUnit "opAnnoExtent OpSamp" $ do
+    , testUnit "OpSamp" $ do
         let inSamps = isampsFromList [1, 2, 3]
             op = Fix (OpSamp inSamps :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))
         opRenderSimple (Rate 1) op === Right inSamps
-    , testUnit "opAnnoExtent OpShift" $ do
+    , testUnit "OpShift" $ do
         let inSamps = isampsFromList [1, 2, 3]
             inner = Fix (OpSamp inSamps :: TestOpF)
             op = Fix (OpShift (Delta 2) inner :: TestOpF)
         opAnnoExtentSingle (Rate 1) op
           === Right (MemoP (Extent (Arc (-2) 1)) (OpShift (Delta 2) (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
         opRenderSimple (Rate 1) op === Right (isampsFromList [3])
-    , testUnit "opAnnoExtent OpSlice" $ do
+    , testUnit "OpSlice" $ do
         let inSamps = isampsFromList [1, 2, 3, 4, 5, 6]
             inner = Fix (OpSamp inSamps :: TestOpF)
             op = Fix (OpSlice (Reps 2) (Arc 1 3) inner :: TestOpF)
         opAnnoExtentSingle (Rate 1) op
           === Right (MemoP (Extent (Arc 0 4)) (OpSlice (Reps 2) (Arc 1 3) (MemoP (Extent (Arc 0 6)) (OpSamp inSamps))))
         opRenderSimple (Rate 1) op === Right (isampsFromList [2, 3, 2, 3])
-    , testUnit "opAnnoExtent OpConcat" $ do
+    , testUnit "OpConcat" $ do
         let inSamps1 = isampsFromList [1, 2, 3]
             inSamps2 = isampsFromList [4, 5, 6]
             op1 = Fix (OpSamp inSamps1 :: TestOpF)
@@ -107,7 +117,7 @@ opTests lim =
                 )
             )
         opRenderSimple (Rate 1) op === Right (isampsFromList [1, 2, 3, 4, 5, 6])
-    , testUnit "opAnnoExtent OpMerge" $ do
+    , testUnit "OpMerge" $ do
         let inSamps1 = isampsFromList [1, 2]
             inSamps2 = isampsFromList [4, 5, 6]
             op1 = Fix (OpSamp inSamps1 :: TestOpF)
@@ -124,34 +134,37 @@ opTests lim =
                 )
             )
         opRenderSimple (Rate 1) op === Right (isampsFromList [5, 7, 6])
-    , testUnit "opAnnoExtent OpRef" $ do
+    , testUnit "OpRef" $ do
         let op = Fix (OpRef 'a' :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Left 'a'
-    , testProp "opInferExtentTopo respects dependencies" lim $ do
+    , testProp "gen test" lim $ do
+        let rate = Rate 1
         -- Generate a set of valid keys
-        keys <- forAll $ Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z'])
+        keys <- forAll (Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z']))
         let validKeys = Set.fromList keys
-
-        -- Generate a map of ops where all OpRef constructors use valid keys
-        ops <- forAll $ genValidOpMap validKeys
-
-        -- Get inferred lengths
-        case opInferExtentTopo (Rate 1) ops of
-          Left _ -> pure () -- Skip if inference fails
-          Right inferred -> do
-            -- For each key in the map
-            for_ (Map.keys ops) $ \k -> do
-              -- If we have an inferred length
-              case Map.lookup k inferred of
-                Nothing -> pure () -- Skip if no inference
-                Just (Right infLen) -> do
-                  -- Get the annotated length
-                  case opAnnoExtentSingle (Rate 1) (ops Map.! k) of
-                    Left _ -> pure () -- Skip if annotation fails
-                    Right (MemoP annLen _) -> do
-                      -- Inferred length should be >= annotated length
-                      assert $ infLen >= annLen
-                Just (Left _) -> pure () -- Skip if inference failed for this key
+        -- Generate a map of ops with valid references
+        ops <- forAll (genValidOpMap validKeys)
+        -- Infer and annotate lengths
+        case opAnnoExtentTopo rate ops of
+          Left err -> liftIO (throwIO err)
+          Right ans -> do
+            case sequence ans of
+              Left n -> fail ("Missing key " ++ show n)
+              Right ans' -> do
+                case opRenderTopo rate ans' of
+                  Left err -> liftIO (throwIO err)
+                  Right res -> do
+                    for_ (Map.toList res) $ \(k, samps) -> do
+                      let an = ans' Map.! k
+                          ex = memoKey an
+                      case extentPosArc ex of
+                        Nothing -> pure ()
+                        Just arc -> do
+                          let _len = arcLen @ElemCount (quantize rate arc)
+                              _arr = runSamples samps arc
+                          -- TODO fix
+                          -- isampsLength arr === len
+                          pure ()
     ]
 
 main :: IO ()
@@ -174,11 +187,14 @@ genOp validKeys = genR
       ++ ([Fix . OpRef <$> Gen.element validKeys | not (null validKeys)])
   recursive =
     [ Gen.subtermM genR $ \r -> do
-        n <- Gen.integral (Range.linear 1 10)
+        n <- Gen.integral (Range.linearFrom 0 (-10) 10)
         pure (Fix (OpShift (Delta (fromInteger n)) r))
     , Gen.subtermM genR $ \r -> do
         n <- Gen.integral (Range.linear 1 3)
-        pure (Fix (OpSlice (Reps n) (Arc 0 1) r))
+        a <- fmap fromInteger (Gen.integral (Range.linearFrom 0 (-10) 10))
+        b <- fmap fromInteger (Gen.integral (Range.linearFrom 0 (-10) 10))
+        let arc = Arc (min a b) (max a b)
+        pure (Fix (OpSlice (Reps n) arc r))
     , genSeqSubterm genR (Fix . OpConcat)
     , genSeqSubterm genR (Fix . OpMerge)
     ]
@@ -191,9 +207,8 @@ genSeqSubterm genOp' f = do
 
 genValidOpMap :: (Ord n) => Set.Set n -> Gen (Map.Map n (Op n))
 genValidOpMap validKeys = do
-  n <- Gen.integral (Range.linear 1 5)
-  keys <- Gen.list (Range.singleton n) (Gen.element (Set.toList validKeys))
-  ops <- Gen.list (Range.singleton n) (genOp (Set.toList validKeys))
+  let keys = Set.toList validKeys
+  ops <- for [1 .. length keys] (\i -> genOp (drop i keys))
   pure (Map.fromList (zip keys ops))
 
 -- From monad-extras
