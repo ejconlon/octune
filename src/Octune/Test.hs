@@ -207,6 +207,11 @@ opTests lim =
     , testUnit "OpRef" $ do
         let op = Fix (OpRef 'a' :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Left 'a'
+    , testProp "invariant repeat 1" lim $ do
+        let rate = Rate 1
+        op <- forAll (genOp [])
+        let op' = Fix (OpRepeat 1 op :: TestOpF)
+        opRenderSimple rate op' === opRenderSimple rate op
     , -- , testProp "invariant concat empty left" lim $ do
       --     let rate = Rate 1
       --     op <- forAll (genOp [])
@@ -226,11 +231,6 @@ opTests lim =
       --     let rate = Rate 1
       --     op <- forAll (genOp [])
       --     let op' = Fix (OpMerge (Seq.fromList [op, Fix OpEmpty]) :: TestOpF)
-      --     opRenderSimple rate op' === opRenderSimple rate op
-      -- , testProp "invariant repeat 1" lim $ do
-      --     let rate = Rate 1
-      --     op <- forAll (genOp [])
-      --     let op' = Fix (OpRepeat 1 op :: TestOpF)
       --     opRenderSimple rate op' === opRenderSimple rate op
       -- , testProp "invariant slice whole pos" lim $ do
       --     let rate = Rate 1

@@ -434,6 +434,9 @@ extentFromDelta = Extent . arcFrom 0
 extentEmpty :: Extent
 extentEmpty = Extent (Arc 0 0)
 
+extentNull :: Extent -> Bool
+extentNull = arcNull . unExtent
+
 extentPosArc :: Extent -> Maybe (Arc Time)
 extentPosArc (Extent (Arc s e)) =
   if e <= 0 || s >= e
@@ -455,8 +458,8 @@ extentRepeat n ext =
 newtype ExtentMerge = ExtentMerge {unExtentMerge :: Extent}
 
 instance Semigroup ExtentMerge where
-  ExtentMerge (Extent a) <> ExtentMerge (Extent b) =
-    ExtentMerge (Extent (arcUnion a b))
+  ExtentMerge (Extent (Arc sa ea)) <> ExtentMerge (Extent (Arc sb eb)) =
+    ExtentMerge (Extent (Arc 0 (max (ea - sa) (eb - sb))))
 
 instance Monoid ExtentMerge where
   mempty = ExtentMerge extentEmpty
@@ -735,115 +738,3 @@ opRenderMutSimple rate op = runExceptT $ do
   samps <- opRenderMut rate throwError op'
   let marc = extentPosArc (memoKey op')
   maybe (pure isampsEmpty) (fmap InternalSamples . liftIO . runMutSamplesSimple rate samps) marc
-
--- opRenderMutSimple :: Rate -> Op n -> Either n (IO InternalSamples)
--- opRenderMutSimple rate op = do
---   op' <- opAnnoExtentSingle rate op
---   samps <- opRenderMut rate Left op'
---   pure $ case extentPosArc (memoKey op') of
---     Nothing -> pure isampsEmpty
---     Just whole -> do
---       let elemsLen = arcLen @ElemCount (quantize rate whole)
---       arr <- zeroPrimArray (unElemCount elemsLen)
---       runPrimPar (runMutSamples samps whole arr)
---       fmap InternalSamples (unsafeFreezePrimArray arr)
-
--- data OpEnv n = OpEnv
---   { oeDefs :: !(Map n (Memo (OpF n) Extent))
---   , oeFutVar :: !(MVar (Map n (IVar (PrimArray Int32))))
---   , oeOff :: !ElemCount
---   , oeBufVar :: !(MVar (MutablePrimArray RealWorld Int32))
---   }
---   deriving stock (Eq)
-
--- type OpM n = ReadPar (OpEnv n)
-
--- execOpM :: Map n (Memo (OpF n) Extent) -> ElemCount -> OpM n () -> IO (PrimArray Int32)
--- execOpM defs len act = do
---   buf <- newPrimArray (unElemCount len)
---   bufVar <- newMVar buf
---   futVar <- newMVar Map.empty
---   let env = OpEnv {oeDefs = defs, oeFutVar = futVar, oeOff = 0, oeBufVar = bufVar}
---   runReadPar act env
---   unsafeFreezePrimArray buf
-
--- handleOpSamp :: ElemCount -> ElemCount -> InternalSamples -> OpM n ()
--- handleOpSamp coff clen (InternalSamples src) = do
---   OpEnv _ _ off bufVar <- ask
---   liftIO $ withMVar bufVar $ \b -> copyPrimArray b (unElemCount off) src (unElemCount coff) (unElemCount clen)
-
--- handleOpReplicate :: (Ord n) => Int -> Op2Anno n -> OpM n ()
--- handleOpReplicate n r = do
---   OpEnv _ _ off bufVar <- ask
---   let MemoP rlen _ = r
---   goOpToWave r
---   liftIO $ withMVar bufVar $ \b -> do
---     for_ [1 .. n - 1] $ \i -> do
---       let off' = off + ElemCount i * rlen
---       copyMutablePrimArray b (unElemCount off') b (unElemCount off) (unElemCount rlen)
-
--- handleOpConcat :: (Ord n) => Seq (Op2Anno n) -> OpM n ()
--- handleOpConcat rs = do
---   off <- asks oeOff
---   parFor (InclusiveRange 0 (length rs - 1)) $ \i -> do
---     let r = Seq.index rs i
---         elemOff = sum (take i (map memoKey (toList rs)))
---         off' = off + elemOff
---     local (\env -> env {oeOff = off'}) (goOpToWave r)
-
--- handleOpMerge :: (Ord n) => Seq (Op2Anno n) -> OpM n ()
--- handleOpMerge rs = do
---   parFor (InclusiveRange 0 (length rs - 1)) $ \i -> do
---     let r = Seq.index rs i
---         rlen = memoKey r
---     tmp <- liftIO (zeroPrimArray (unElemCount rlen))
---     tmpVar <- liftIO (newMVar tmp)
---     local (\env -> env {oeOff = 0, oeBufVar = tmpVar}) (goOpToWave r)
---     OpEnv _ _ off bufVar <- ask
---     liftIO $ withMVar bufVar $ \b ->
---       mergeMutableIntoPrimArray (+) b (unElemCount off) tmp 0 (unElemCount rlen)
-
--- handleOpRef :: (Ord n) => ElemCount -> ElemCount -> n -> OpM n ()
--- handleOpRef _coff clen n = do
---   OpEnv defs futVar off bufVar <- ask
---   let def = defs Map.! n
---   ivar <- Par.new
---   xvar <- liftIO $ modifyMVar futVar $ \fut -> do
---     pure $ case Map.lookup n fut of
---       Nothing -> (Map.insert n ivar fut, Nothing)
---       Just var -> (fut, Just var)
---   val <- case xvar of
---     Nothing -> do
---       void $ Par.spawn_ $ Par.put_ ivar =<< liftIO (execOpM defs clen (goOpToWave def))
---       Par.get ivar
---     Just yvar -> Par.get yvar
---   liftIO $ withMVar bufVar $ \b ->
---     copyPrimArray b (unElemCount off) val 0 (unElemCount clen)
-
--- goOpToWave :: (Ord n) => Op2Anno n -> OpM n ()
--- goOpToWave (MemoP clen f) = case f of
---   Op2Empty -> pure ()
---   Op2Samp (Extent coff _) s -> handleOpSamp coff clen s
---   Op2Replicate n r -> handleOpReplicate n r
---   Op2Concat rs -> handleOpConcat rs
---   Op2Merge rs -> handleOpMerge rs
---   Op2Ref (Extent coff _) n -> handleOpRef coff clen n
-
--- data OpErr n
---   = OpErrInfer !(TopoErr n)
---   | OpErrAnno !(AnnoErr n)
---   | OpErrRoot !n
---   deriving stock (Eq, Ord, Show)
-
--- instance (Show n, Typeable n) => Exception (OpErr n)
-
--- opsToWave :: (Ord n) => Map n (Op n) -> n -> IO (Either (OpErr n) InternalSamples)
--- opsToWave defs n = runExceptT $ do
---   infs <- either (throwError . OpErrInfer) pure (opInferLenTopo defs)
---   anns <- either (throwError . OpErrAnno) pure (opAnnoLenTopo defs infs)
---   root <- maybe (throwError (OpErrRoot n)) pure (Map.lookup n anns)
---   arr <- liftIO $ execOpM anns (memoKey root) (goOpToWave root)
---   pure (InternalSamples arr)
-
--- opToWave :: (Ord n) => n -> Op n -> IO (Either (OpErr n) InternalSamples)
--- opToWave n op = opsToWave (Map.singleton n op) n
