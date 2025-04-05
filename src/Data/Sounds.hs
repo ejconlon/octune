@@ -48,9 +48,13 @@ import Data.Sequence (Seq (..))
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Topo (SortErr (..), topoAnnoM, topoEval)
+import Debug.Trace (trace)
 import Paths_octune (getDataFileName)
 import System.Directory (doesFileExist)
 import System.IO.Unsafe (unsafePerformIO)
+
+traceAll :: [[String]] -> a -> a
+traceAll xs = if True then id else trace ("\n<==\n" ++ unlines (fmap (("* " ++) . unwords) xs) ++ "==>\n")
 
 -- Bowtie utils
 
@@ -306,14 +310,12 @@ instance Quantize Time Rate where
   quantize (Rate r) (Arc (Time s) (Time e)) = Arc (truncate (s * r)) (ceiling (e * r))
   unquantize (Rate r) (Arc s e) = Arc (Time (fromIntegral s / r)) (Time (fromIntegral e / r))
 
--- TODO support Rational reps
-newtype Reps = Reps {unReps :: Integer}
+newtype Reps = Reps {unReps :: Rational}
   deriving stock (Eq, Show)
-  deriving newtype (Num, Ord, Enum, Real, Integral)
-  deriving (Semigroup, Monoid) via (Sum Integer)
+  deriving newtype (Num, Ord, Enum, Real, Fractional, RealFrac)
 
-mulReps :: (Num d) => Reps -> d -> d
-mulReps (Reps n) d = fromInteger n * d
+mulReps :: (Fractional d) => Reps -> d -> d
+mulReps (Reps n) d = fromRational n * d
 
 -- Arcs are [start, end), where [same, same) is empty
 data Arc t = Arc
@@ -335,34 +337,48 @@ arcIntersect :: (Measure t d) => Arc t -> Arc t -> Maybe (Arc t)
 arcIntersect (Arc s1 e1) (Arc s2 e2) =
   let s3 = max s1 s2
       e3 = min e1 e2
-  in  if s2 <= e1 || s1 <= e2 then Just (Arc s3 e3) else Nothing
+  in  if s2 >= e1 || s1 >= e2 || s3 >= e3 then Nothing else Just (Arc s3 e3)
 
 arcLen :: (Measure t d) => Arc t -> d
 arcLen (Arc s e) = measureDelta s e
 
 arcFrom :: (Measure t d) => t -> d -> Arc t
-arcFrom t d = Arc t (addDelta t d)
+arcFrom t d =
+  let u = addDelta t d
+  in  if t <= u then Arc t u else Arc u t
 
 arcNull :: (Measure t d) => Arc t -> Bool
 arcNull = (0 ==) . arcLen
 
 arcShift :: (Measure t d) => Arc t -> d -> Arc t
-arcShift (Arc s e) d =
-  let d' = negate d
-  in  Arc (addDelta s d') (addDelta e d')
+arcShift (Arc s e) d = Arc (addDelta s d) (addDelta e d)
 
-arcReps :: (Measure t d) => Arc t -> Reps -> Arc t
-arcReps (Arc s e) n = Arc s (addDelta s (mulReps n (measureDelta s e)))
+arcRepeat :: (Measure t d, Fractional d) => Reps -> Arc t -> Arc t
+arcRepeat n (Arc s e) = Arc s (addDelta s (mulReps n (measureDelta s e)))
 
-data Overlap t = OverlapLt | OverlapEq !(Arc t) | OverlapGt
+data Overlap t d = OverlapLt | OverlapOn !d !(Arc t) !d | OverlapGt
   deriving stock (Eq, Ord, Show)
 
-arcOverlap :: (Ord t) => Arc t -> Arc t -> Overlap t
+arcOverlap :: (Measure t d) => Arc t -> Arc t -> Overlap t d
 arcOverlap (Arc ns ne) (Arc hs he) =
   if
     | ne <= hs -> OverlapLt
     | ns >= he -> OverlapGt
-    | otherwise -> OverlapEq (Arc (max ns hs) (min ne he))
+    | otherwise ->
+        let xs = max ns hs
+            xe = min ne he
+            before = measureDelta ns xs
+            after = measureDelta xe ne
+        in  OverlapOn before (Arc xs xe) after
+
+arcRelative :: (Measure t d, Num t) => Arc t -> Arc t -> Maybe (d, Arc t, d)
+arcRelative (Arc ns ne) abso@(Arc hs he) =
+  let rel'@(Arc ns' _) = Arc (max 0 ns) (max 0 ne)
+      s = addDelta hs (measureDelta 0 ns')
+      e = min he (addDelta s (arcLen rel'))
+  in  if s >= e
+        then Nothing
+        else Just (max 0 (measureDelta ns 0), Arc s e, max 0 (arcLen rel' - arcLen abso))
 
 arcSkip :: (Measure t d) => d -> Arc t -> Maybe (Arc t)
 arcSkip d (Arc bs be) =
@@ -383,7 +399,8 @@ data OpF n r
   = OpEmpty
   | OpSamp !InternalSamples
   | OpShift !Delta r
-  | OpSlice !Reps !(Arc Time) r
+  | OpRepeat !Reps r
+  | OpSlice !(Arc Time) r
   | OpConcat !(Seq r)
   | OpMerge !(Seq r)
   | OpRef !n
@@ -413,7 +430,7 @@ extentEmpty = Extent (Arc 0 0)
 
 extentPosArc :: Extent -> Maybe (Arc Time)
 extentPosArc (Extent (Arc s e)) =
-  if s >= e || e <= 0
+  if e <= 0 || s >= e
     then Nothing
     else Just (Arc 0 e)
 
@@ -423,8 +440,11 @@ extentLen = maybe 0 arcLen . extentPosArc
 extentShift :: Extent -> Delta -> Extent
 extentShift (Extent arc) c = Extent (if arcNull arc then arc else arcShift arc c)
 
-extentSlice :: Reps -> Arc Time -> Extent
-extentSlice n arc = mkExtent (arcFrom 0 (arcLen (arcReps arc n)))
+extentRepeat :: Reps -> Extent -> Extent
+extentRepeat n ext =
+  if n <= 0
+    then extentEmpty
+    else maybe extentEmpty (Extent . arcRepeat n) (extentPosArc ext)
 
 newtype ExtentMerge = ExtentMerge {unExtentMerge :: Extent}
 
@@ -459,8 +479,9 @@ opInferExtentF rate onRef = \case
           if i == 0
             then extentEmpty
             else mkExtent (unquantize rate (Arc 0 i))
-  OpSlice n sarc _ -> pure (extentSlice n sarc)
-  OpShift c r -> pure (extentShift r c)
+  OpRepeat n r -> pure (extentRepeat n r)
+  OpSlice sarc _ -> pure (extentFromDelta (arcLen sarc))
+  OpShift c r -> pure (extentShift r (negate c))
   OpConcat rs -> pure (extentConcat rs)
   OpMerge rs -> pure (extentMerge rs)
   OpRef n -> onRef n
@@ -511,24 +532,62 @@ orSamp rate x =
                       samps = [preSamps, bodySamps, postSamps]
                   in  isampsConcat samps
 
-orSlice :: Rate -> Reps -> Arc Time -> Samples -> Samples
-orSlice rate n sarc rsamp =
-  let len = arcLen sarc
-  in  if arcNull sarc
-        then Samples (arrEmpty rate . flip arcReps n)
-        else Samples $ \arc ->
-          case arcNarrow sarc arc of
-            Nothing -> arrEmpty rate arc
-            Just arc' ->
-              let len' = arcLen arc'
-                  bodySamps = runSamples rsamp arc'
-              in  isampsReplicate (fromIntegral n) $
-                    if len == len'
-                      then bodySamps
-                      else isampsConcat [bodySamps, arrEmpty rate (arcFrom 0 (len - len'))]
+orRepeat :: Rate -> Reps -> Extent -> Samples -> Samples
+orRepeat rate n rext rsamp =
+  if n <= 0
+    then Samples (arrEmpty rate)
+    else case extentPosArc rext of
+      Nothing -> Samples (arrEmpty rate)
+      Just sarc -> Samples $ \arc ->
+        let -- Get the total length of one repetition
+            repLen = arcLen sarc
+            -- Get the relative position within the total length
+            relPos = arcStart arc
+            -- Get the number of full repetitions before the start
+            fullReps = floor (unTime relPos / unDelta repLen)
+            -- Get the offset within a single repetition
+            repOff = Time (unTime relPos - fromInteger fullReps * unDelta repLen)
+            -- Get the length we need to generate
+            genLen = arcLen arc
+            -- Calculate how many full repetitions we need
+            numReps = ceiling (unDelta genLen / unDelta repLen) + 1
+            -- Get the minimal sub-arc we need to generate
+            subArc = arcFrom repOff repLen
+            -- Generate the base samples
+            baseSamps = runSamples rsamp subArc
+            -- Generate all repetitions
+            allReps = isampsReplicate numReps baseSamps
+            -- Trim to the exact length needed
+            trimOff = ElemCount (unElemCount (arcLen @ElemCount (quantize rate (Arc 0 relPos))))
+            trimLen = ElemCount (unElemCount (arcLen @ElemCount (quantize rate arc)))
+        in isampsTrim trimOff trimLen allReps
 
-orShift :: Delta -> Samples -> Samples
-orShift c rsamp = Samples (\arc -> runSamples rsamp (arcShift arc (negate c)))
+orSlice :: Rate -> Arc Time -> Samples -> Samples
+orSlice rate sarc rsamp =
+  if arcNull sarc
+    then Samples (arrEmpty rate)
+    else Samples $ \arc ->
+      case arcRelative arc sarc of
+        Just (before, arc', after) ->
+          let preSamps = arrEmpty rate (arcFrom (arcStart arc') (negate before))
+              bodySamps = runSamples rsamp arc'
+              postSamps = arrEmpty rate (arcFrom (arcEnd arc') after)
+              samps = [preSamps, bodySamps, postSamps]
+          in  isampsConcat samps
+        Nothing -> arrEmpty rate arc
+
+orShift :: Rate -> Delta -> Samples -> Samples
+orShift rate c rsamp = Samples $ \arc ->
+  runSamples rsamp (arcShift arc c)
+
+-- let arr = runSamples rsamp (arcShift arc (negate c))
+--     arrLen = isampsLength arr
+--     len = arcLen @ElemCount (quantize rate arc)
+-- in if c < 0 && arrLen < len
+--   then
+--     -- On negative shift, we need to front-pad the output
+--     isampsConcat [isampsConstant (len - arrLen) 0, arr]
+--   else arr
 
 orConcat :: Rate -> Seq (Anno Extent Samples) -> Samples
 orConcat rate rs =
@@ -550,12 +609,12 @@ orConcat rate rs =
                       Empty -> samps
                       (subDelta, subArc, subGen) :<| rest -> do
                         case arcOverlap filtArc subArc of
-                          OverlapLt -> gen samps rest
-                          OverlapEq narrowArc ->
-                            let narrowArc' = arcShift narrowArc subDelta
-                                subSamps = runSamples subGen narrowArc'
+                          OverlapLt -> samps
+                          OverlapOn _ overArc _ ->
+                            let overArc' = arcShift overArc (negate subDelta)
+                                subSamps = runSamples subGen overArc'
                             in  gen (samps :|> subSamps) rest
-                          OverlapGt -> samps
+                          OverlapGt -> gen samps rest
                     genSamps = gen Empty subArcs
                 in  isampsConcat (toList (preSamps :<| (genSamps :|> postSamps)))
 
@@ -569,8 +628,9 @@ opRender rate onRef = goTop
   go = \case
     OpEmpty -> pure (orEmpty rate)
     OpSamp x -> pure (orSamp rate x)
-    OpSlice n arc r -> pure (orSlice rate n arc (annoVal r))
-    OpShift c r -> pure (orShift c (annoVal r))
+    OpRepeat n r -> pure (orRepeat rate n (annoKey r) (annoVal r))
+    OpSlice arc r -> pure (orSlice rate arc (annoVal r))
+    OpShift c r -> pure (orShift rate c (annoVal r))
     OpConcat rs -> pure (orConcat rate rs)
     OpMerge rs -> pure (orMerge (fmap annoVal (toList rs)))
     OpRef n -> lift (onRef n)
@@ -663,10 +723,11 @@ opRenderMut rate onRef = goTop
   go = \case
     OpEmpty -> pure ormEmpty
     OpSamp x -> pure (ormSamp rate x)
-    OpSlice n (Arc ss se) (Anno rext rsamp) -> error "TODO"
-    OpShift c r -> error "TODO"
-    OpConcat rs -> error "TODO"
-    OpMerge rs -> error "TODO"
+    OpRepeat _n _r -> error "TODO"
+    OpSlice (Arc _ss _se) (Anno _rext _rsamp) -> error "TODO"
+    OpShift _c _r -> error "TODO"
+    OpConcat _rs -> error "TODO"
+    OpMerge _rs -> error "TODO"
     OpRef n -> lift (onRef n)
 
 opRenderMutSimple :: Rate -> Op n -> IO (Either n InternalSamples)
