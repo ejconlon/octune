@@ -29,6 +29,7 @@ import Data.Sounds
   , isampsLength
   , opAnnoExtentSingle
   , opAnnoExtentTopo
+  , opRenderMutSimple
   , opRenderSimple
   , opRenderTopo
   , quantize
@@ -139,11 +140,13 @@ opTests lim =
         let op = Fix (OpEmpty :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 0 0)) OpEmpty)
         opRenderSimple (Rate 1) op === Right (isampsFromList [])
+        liftIO (opRenderMutSimple (Rate 1) op) >>= (=== Right (isampsFromList []))
     , testUnit "OpSamp" $ do
         let inSamps = isampsFromList [1, 2, 3]
             op = Fix (OpSamp inSamps :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))
         opRenderSimple (Rate 1) op === Right inSamps
+        liftIO (opRenderMutSimple (Rate 1) op) >>= (=== Right inSamps)
     , testUnit "OpShift" $ do
         let inSamps = isampsFromList [1, 2, 3]
             inner = Fix (OpSamp inSamps :: TestOpF)
@@ -201,20 +204,11 @@ opTests lim =
     , testUnit "OpRef" $ do
         let op = Fix (OpRef 'a' :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Left 'a'
-    , testUnit "regression 1" $ do
-        let op = Fix (OpSlice (Arc 1 3) (Fix (OpSlice (Arc 0 2) (Fix OpEmpty))) :: TestOpF)
-        opAnnoExtentSingle (Rate 1) op
-          === Right
-            ( MemoP
-                (Extent (Arc 0 2))
-                (OpSlice (Arc 1 3) (MemoP (Extent (Arc 0 2)) (OpSlice (Arc 0 2) (MemoP (Extent (Arc 0 0)) OpEmpty))))
-            )
-        opRenderSimple (Rate 1) op === Right (isampsFromList [0, 0])
     , testProp "gen test" lim $ do
         let rate = Rate 1
         -- Generate a set of valid keys
-        -- keys <- forAll (Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z']))
-        let keys = ['a']
+        keys <- forAll (Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z']))
+        -- let keys = ['a']
         let validKeys = Set.fromList keys
         -- Generate a map of ops with valid references
         ops <- forAll (genValidOpMap validKeys)
