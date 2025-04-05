@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wno-identities #-}
+
 module Data.Sounds where
 
 import Bowtie (Anno (..), Fix (..), Memo, cataM, memoFix, memoKey, mkMemoM, pattern MemoP)
@@ -372,13 +374,17 @@ arcOverlap (Arc ns ne) (Arc hs he) =
         in  OverlapOn before (Arc xs xe) after
 
 arcRelative :: (Measure t d, Num t) => Arc t -> Arc t -> Maybe (d, Arc t, d)
-arcRelative (Arc ns ne) abso@(Arc hs he) =
-  let rel'@(Arc ns' _) = Arc (max 0 ns) (max 0 ne)
-      s = addDelta hs (measureDelta 0 ns')
-      e = min he (addDelta s (arcLen rel'))
+arcRelative (Arc ns ne) (Arc hs he) =
+  let s = max hs (addDelta hs (measureDelta 0 ns))
+      e = min he (addDelta hs (measureDelta 0 ne))
   in  if s >= e
         then Nothing
-        else Just (max 0 (measureDelta ns 0), Arc s e, max 0 (arcLen rel' - arcLen abso))
+        else
+          Just
+            ( max 0 (measureDelta ns (addDelta 0 (measureDelta hs s)))
+            , Arc s e
+            , max 0 (measureDelta (addDelta 0 (measureDelta hs e)) ne)
+            )
 
 arcSkip :: (Measure t d) => d -> Arc t -> Maybe (Arc t)
 arcSkip d (Arc bs be) =
@@ -539,28 +545,30 @@ orRepeat rate n rext rsamp =
     else case extentPosArc rext of
       Nothing -> Samples (arrEmpty rate)
       Just sarc -> Samples $ \arc ->
-        let -- Get the total length of one repetition
-            repLen = arcLen sarc
-            -- Get the relative position within the total length
-            relPos = arcStart arc
-            -- Get the number of full repetitions before the start
-            fullReps = floor (unTime relPos / unDelta repLen)
-            -- Get the offset within a single repetition
-            repOff = Time (unTime relPos - fromInteger fullReps * unDelta repLen)
-            -- Get the length we need to generate
-            genLen = arcLen arc
-            -- Calculate how many full repetitions we need
-            numReps = ceiling (unDelta genLen / unDelta repLen) + 1
-            -- Get the minimal sub-arc we need to generate
-            subArc = arcFrom repOff repLen
-            -- Generate the base samples
-            baseSamps = runSamples rsamp subArc
-            -- Generate all repetitions
-            allReps = isampsReplicate numReps baseSamps
-            -- Trim to the exact length needed
-            trimOff = ElemCount (unElemCount (arcLen @ElemCount (quantize rate (Arc 0 relPos))))
-            trimLen = ElemCount (unElemCount (arcLen @ElemCount (quantize rate arc)))
-        in isampsTrim trimOff trimLen allReps
+        let
+          -- Get the total length of one repetition
+          repLen = arcLen sarc
+          -- Get the relative position within the total length
+          relPos = arcStart arc
+          -- Get the number of full repetitions before the start
+          fullReps = floor (unTime relPos / unDelta repLen)
+          -- Get the offset within a single repetition
+          repOff = Time (unTime relPos - fromInteger fullReps * unDelta repLen)
+          -- Get the length we need to generate
+          genLen = arcLen arc
+          -- Calculate how many full repetitions we need
+          numReps = ceiling (unDelta genLen / unDelta repLen) + 1
+          -- Get the minimal sub-arc we need to generate
+          subArc = arcFrom repOff repLen
+          -- Generate the base samples
+          baseSamps = runSamples rsamp subArc
+          -- Generate all repetitions
+          allReps = isampsReplicate numReps baseSamps
+          -- Trim to the exact length needed
+          trimOff = ElemCount (unElemCount (arcLen @ElemCount (quantize rate (Arc 0 relPos))))
+          trimLen = ElemCount (unElemCount (arcLen @ElemCount (quantize rate arc)))
+        in
+          isampsTrim trimOff trimLen allReps
 
 orSlice :: Rate -> Arc Time -> Samples -> Samples
 orSlice rate sarc rsamp =
@@ -577,17 +585,8 @@ orSlice rate sarc rsamp =
         Nothing -> arrEmpty rate arc
 
 orShift :: Rate -> Delta -> Samples -> Samples
-orShift rate c rsamp = Samples $ \arc ->
+orShift _rate c rsamp = Samples $ \arc ->
   runSamples rsamp (arcShift arc c)
-
--- let arr = runSamples rsamp (arcShift arc (negate c))
---     arrLen = isampsLength arr
---     len = arcLen @ElemCount (quantize rate arc)
--- in if c < 0 && arrLen < len
---   then
---     -- On negative shift, we need to front-pad the output
---     isampsConcat [isampsConstant (len - arrLen) 0, arr]
---   else arr
 
 orConcat :: Rate -> Seq (Anno Extent Samples) -> Samples
 orConcat rate rs =

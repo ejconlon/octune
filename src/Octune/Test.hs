@@ -18,10 +18,12 @@ import Data.Sounds
   , InternalSamples (..)
   , Op
   , OpF (..)
+  , Overlap (..)
   , Rate (..)
-  , Reps (..)
   , Samples (..)
-  , arcLen
+  , Time
+  , arcOverlap
+  , arcRelative
   , extentPosArc
   , isampsFromList
   , isampsLength
@@ -30,7 +32,6 @@ import Data.Sounds
   , opRenderSimple
   , opRenderTopo
   , quantize
-  , traceAll
   )
 import Data.Topo (SortErr, topoSort)
 import Data.Traversable (for)
@@ -74,6 +75,62 @@ topoSortTests lim =
 
 type TestOpF = OpF Char (Fix (OpF Char))
 
+utilTests :: TestTree
+utilTests =
+  testGroup
+    "util"
+    [ testUnit "arcRelative empty" $ do
+        arcRelative @Time (Arc 0 0) (Arc 0 2) === Nothing
+        arcRelative @Time (Arc 1 1) (Arc 0 2) === Nothing
+        arcRelative @Time (Arc 2 2) (Arc 0 2) === Nothing
+    , testUnit "arcRelative exact match" $ do
+        arcRelative @Time (Arc 0 1) (Arc 0 1) === Just (0, Arc 0 1, 0)
+        arcRelative @Time (Arc 0 1) (Arc 10 11) === Just (0, Arc 10 11, 0)
+    , testUnit "arcRelative contained" $ do
+        arcRelative @Time (Arc 1 2) (Arc 0 3) === Just (0, Arc 1 2, 0)
+        arcRelative @Time (Arc 1 2) (Arc 10 13) === Just (0, Arc 11 12, 0)
+    , testUnit "arcRelative overlapping start" $ do
+        arcRelative @Time (Arc (-1) 1) (Arc 0 2) === Just (1, Arc 0 1, 0)
+        arcRelative @Time (Arc (-1) 1) (Arc 10 12) === Just (1, Arc 10 11, 0)
+    , testUnit "arcRelative overlapping end" $ do
+        arcRelative @Time (Arc 1 3) (Arc 0 2) === Just (0, Arc 1 2, 1)
+        arcRelative @Time (Arc 1 3) (Arc 10 12) === Just (0, Arc 11 12, 1)
+    , testUnit "arcRelative completely before" $ do
+        arcRelative @Time (Arc (-2) (-1)) (Arc 0 1) === Nothing
+        arcRelative @Time (Arc (-2) (-1)) (Arc 10 11) === Nothing
+    , testUnit "arcRelative completely after" $ do
+        arcRelative @Time (Arc 2 3) (Arc 0 1) === Nothing
+        arcRelative @Time (Arc 2 3) (Arc 10 11) === Nothing
+    , testUnit "arcRelative containing" $ do
+        arcRelative @Time (Arc (-1) 4) (Arc 0 3) === Just (1, Arc 0 3, 1)
+        arcRelative @Time (Arc (-1) 4) (Arc 10 13) === Just (1, Arc 10 13, 1)
+    , testUnit "arcOverlap empty" $ do
+        arcOverlap @Time (Arc 0 0) (Arc 0 2) === OverlapLt
+        arcOverlap @Time (Arc 1 1) (Arc 0 2) === OverlapOn 0 (Arc 1 1) 0
+        arcOverlap @Time (Arc 2 2) (Arc 0 2) === OverlapGt
+    , testUnit "arcOverlap exact match" $ do
+        arcOverlap @Time (Arc 0 1) (Arc 0 1) === OverlapOn 0 (Arc 0 1) 0
+        arcOverlap @Time (Arc 0 1) (Arc 10 11) === OverlapLt
+    , testUnit "arcOverlap contained" $ do
+        arcOverlap @Time (Arc 1 2) (Arc 0 3) === OverlapOn 0 (Arc 1 2) 0
+        arcOverlap @Time (Arc 1 2) (Arc 10 13) === OverlapLt
+    , testUnit "arcOverlap overlapping start" $ do
+        arcOverlap @Time (Arc (-1) 1) (Arc 0 2) === OverlapOn 1 (Arc 0 1) 0
+        arcOverlap @Time (Arc (-1) 1) (Arc 10 12) === OverlapLt
+    , testUnit "arcOverlap overlapping end" $ do
+        arcOverlap @Time (Arc 1 3) (Arc 0 2) === OverlapOn 0 (Arc 1 2) 1
+        arcOverlap @Time (Arc 1 3) (Arc 10 12) === OverlapLt
+    , testUnit "arcOverlap completely before" $ do
+        arcOverlap @Time (Arc (-2) (-1)) (Arc 0 1) === OverlapLt
+        arcOverlap @Time (Arc (-2) (-1)) (Arc 10 11) === OverlapLt
+    , testUnit "arcOverlap completely after" $ do
+        arcOverlap @Time (Arc 2 3) (Arc 0 1) === OverlapGt
+        arcOverlap @Time (Arc 2 3) (Arc 10 11) === OverlapLt
+    , testUnit "arcOverlap containing" $ do
+        arcOverlap @Time (Arc (-1) 4) (Arc 0 3) === OverlapOn 1 (Arc 0 3) 1
+        arcOverlap @Time (Arc (-1) 4) (Arc 10 13) === OverlapLt
+    ]
+
 opTests :: TestLimit -> TestTree
 opTests lim =
   testGroup
@@ -104,7 +161,8 @@ opTests lim =
     , testUnit "OpRepeat" $ do
         let inSamps = isampsFromList [1, 2, 3]
             op = Fix (OpRepeat 2 (Fix (OpSamp inSamps)) :: TestOpF)
-        opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 0 6)) (OpRepeat 2 (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
+        opAnnoExtentSingle (Rate 1) op
+          === Right (MemoP (Extent (Arc 0 6)) (OpRepeat 2 (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
         opRenderSimple (Rate 1) op === Right (isampsFromList [1, 2, 3, 1, 2, 3])
     , testUnit "OpConcat" $ do
         let inSamps1 = isampsFromList [1, 2, 3]
@@ -145,36 +203,40 @@ opTests lim =
         opAnnoExtentSingle (Rate 1) op === Left 'a'
     , testUnit "regression 1" $ do
         let op = Fix (OpSlice (Arc 1 3) (Fix (OpSlice (Arc 0 2) (Fix OpEmpty))) :: TestOpF)
+        opAnnoExtentSingle (Rate 1) op
+          === Right
+            ( MemoP
+                (Extent (Arc 0 2))
+                (OpSlice (Arc 1 3) (MemoP (Extent (Arc 0 2)) (OpSlice (Arc 0 2) (MemoP (Extent (Arc 0 0)) OpEmpty))))
+            )
         opRenderSimple (Rate 1) op === Right (isampsFromList [0, 0])
-    -- , testProp "gen test" lim $ do
-    --     let rate = Rate 1
-    --     -- Generate a set of valid keys
-    --     -- keys <- forAll (Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z']))
-    --     let keys = ['a']
-    --     let validKeys = Set.fromList keys
-    --     -- Generate a map of ops with valid references
-    --     ops <- forAll (genValidOpMap validKeys)
-    --     -- Infer and annotate lengths
-    --     case opAnnoExtentTopo rate ops of
-    --       Left err -> liftIO (throwIO err)
-    --       Right ans -> do
-    --         case sequence ans of
-    --           Left n -> fail ("Missing key " ++ show n)
-    --           Right ans' -> do
-    --             case opRenderTopo rate ans' of
-    --               Left err -> liftIO (throwIO err)
-    --               Right res -> do
-    --                 for_ (Map.toList res) $ \(k, samps) -> do
-    --                   let an = ans' Map.! k
-    --                       ex = memoKey an
-    --                   case extentPosArc ex of
-    --                     Nothing -> pure ()
-    --                     Just arc -> do
-    --                       let len = arcEnd @ElemCount (quantize rate arc)
-    --                           arr = runSamples samps arc
-    --                       -- TODO fix
-    --                       traceAll [["len", show len], ["arr", show arr]] $ isampsLength arr === len
-    --                       pure ()
+    , testProp "gen test" lim $ do
+        let rate = Rate 1
+        -- Generate a set of valid keys
+        -- keys <- forAll (Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z']))
+        let keys = ['a']
+        let validKeys = Set.fromList keys
+        -- Generate a map of ops with valid references
+        ops <- forAll (genValidOpMap validKeys)
+        -- Infer and annotate lengths
+        case opAnnoExtentTopo rate ops of
+          Left err -> liftIO (throwIO err)
+          Right ans -> do
+            case sequence ans of
+              Left n -> fail ("Missing key " ++ show n)
+              Right ans' -> do
+                case opRenderTopo rate ans' of
+                  Left err -> liftIO (throwIO err)
+                  Right res -> do
+                    for_ (Map.toList res) $ \(k, samps) -> do
+                      let an = ans' Map.! k
+                          ex = memoKey an
+                      case extentPosArc ex of
+                        Nothing -> pure ()
+                        Just arc -> do
+                          let len = arcEnd @ElemCount (quantize rate arc)
+                              arr = runSamples samps arc
+                          isampsLength arr === len
     ]
 
 main :: IO ()
@@ -182,6 +244,7 @@ main = testMain $ \lim ->
   testGroup
     "suite"
     [ topoSortTests lim
+    , utilTests
     , opTests lim
     ]
 
