@@ -7,6 +7,7 @@ import Control.Monad.IO.Class (MonadIO (..))
 import Dahdit.Sizes (ElemCount (..))
 import Data.Foldable (for_, toList)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe)
 import Data.Primitive.PrimArray (primArrayFromList)
 import Data.Sequence (Seq (..))
 import Data.Sequence qualified as Seq
@@ -25,10 +26,12 @@ import Data.Sounds
   , arcOverlap
   , arcRelative
   , extentPosArc
+  , isampsEmpty
   , isampsFromList
   , isampsLength
   , opAnnoExtentSingle
   , opAnnoExtentTopo
+  , opInferExtentSingle
   , opRenderMutSimple
   , opRenderSimple
   , opRenderTopo
@@ -139,8 +142,8 @@ opTests lim =
     [ testUnit "OpEmpty" $ do
         let op = Fix (OpEmpty :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 0 0)) OpEmpty)
-        opRenderSimple (Rate 1) op === Right (isampsFromList [])
-        liftIO (opRenderMutSimple (Rate 1) op) >>= (=== Right (isampsFromList []))
+        opRenderSimple (Rate 1) op === Right isampsEmpty
+        liftIO (opRenderMutSimple (Rate 1) op) >>= (=== Right isampsEmpty)
     , testUnit "OpSamp" $ do
         let inSamps = isampsFromList [1, 2, 3]
             op = Fix (OpSamp inSamps :: TestOpF)
@@ -204,7 +207,41 @@ opTests lim =
     , testUnit "OpRef" $ do
         let op = Fix (OpRef 'a' :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Left 'a'
-    , testProp "gen test" lim $ do
+    , -- , testProp "invariant concat empty left" lim $ do
+      --     let rate = Rate 1
+      --     op <- forAll (genOp [])
+      --     let op' = Fix (OpConcat (Seq.fromList [Fix OpEmpty, op]) :: TestOpF)
+      --     opRenderSimple rate op' === opRenderSimple rate op
+      -- , testProp "invariant concat empty right" lim $ do
+      --     let rate = Rate 1
+      --     op <- forAll (genOp [])
+      --     let op' = Fix (OpConcat (Seq.fromList [op, Fix OpEmpty]) :: TestOpF)
+      --     opRenderSimple rate op' === opRenderSimple rate op
+      -- , testProp "invariant merge empty left" lim $ do
+      --     let rate = Rate 1
+      --     op <- forAll (genOp [])
+      --     let op' = Fix (OpMerge (Seq.fromList [Fix OpEmpty, op]) :: TestOpF)
+      --     opRenderSimple rate op' === opRenderSimple rate op
+      -- , testProp "invariant merge empty right" lim $ do
+      --     let rate = Rate 1
+      --     op <- forAll (genOp [])
+      --     let op' = Fix (OpMerge (Seq.fromList [op, Fix OpEmpty]) :: TestOpF)
+      --     opRenderSimple rate op' === opRenderSimple rate op
+      -- , testProp "invariant repeat 1" lim $ do
+      --     let rate = Rate 1
+      --     op <- forAll (genOp [])
+      --     let op' = Fix (OpRepeat 1 op :: TestOpF)
+      --     opRenderSimple rate op' === opRenderSimple rate op
+      -- , testProp "invariant slice whole pos" lim $ do
+      --     let rate = Rate 1
+      --     op <- forAll (genOp [])
+      --     case opInferExtentSingle rate op of
+      --       Left _ -> fail "Failed to infer extent"
+      --       Right ext -> do
+      --         let arc = fromMaybe (Arc 0 0) (extentPosArc ext)
+      --             op' = Fix (OpSlice arc op :: TestOpF)
+      --         opRenderSimple rate op' === opRenderSimple rate op
+      testProp "gen test" lim $ do
         let rate = Rate 1
         -- Generate a set of valid keys
         keys <- forAll (Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z']))
