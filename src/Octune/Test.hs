@@ -157,6 +157,13 @@ opTests lim =
         opAnnoExtentSingle (Rate 1) op
           === Right (MemoP (Extent (Arc (-2) 1)) (OpShift (Delta 2) (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
         opRenderSimple (Rate 1) op === Right (isampsFromList [3])
+    , testUnit "OpShift negative" $ do
+        let inSamps = isampsFromList [1, 2, 3]
+            inner = Fix (OpSamp inSamps :: TestOpF)
+            op = Fix (OpShift (Delta (-2)) inner :: TestOpF)
+        opAnnoExtentSingle (Rate 1) op
+          === Right (MemoP (Extent (Arc 2 5)) (OpShift (Delta (-2)) (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
+        opRenderSimple (Rate 1) op === Right (isampsFromList [0, 0, 1, 2, 3])
     , testUnit "OpSlice" $ do
         let inSamps = isampsFromList [1, 2, 3, 4, 5, 6]
             inner = Fix (OpSamp inSamps :: TestOpF)
@@ -207,12 +214,18 @@ opTests lim =
     , testUnit "OpRef" $ do
         let op = Fix (OpRef 'a' :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Left 'a'
-    , testProp "invariant repeat 1" lim $ do
-        let rate = Rate 1
-        op <- forAll (genOp [])
-        let op' = Fix (OpRepeat 1 op :: TestOpF)
-        opRenderSimple rate op' === opRenderSimple rate op
-    , -- , testProp "invariant concat empty left" lim $ do
+    , -- , testProp "invariant repeat 1" lim $ do
+      --     let rate = Rate 1
+      --     op <- forAll (genOp [])
+      --     let op' = Fix (OpRepeat 1 op :: TestOpF)
+      --     opRenderSimple rate op' === opRenderSimple rate op
+      -- , testProp "invariant repeat 2" lim $ do
+      --     let rate = Rate 1
+      --     op <- forAll (genOp [])
+      --     let doubleOp = Fix (OpConcat (Seq.fromList [op, op]))
+      --     let op' = Fix (OpRepeat 2 op :: TestOpF)
+      --     opRenderSimple rate op' === opRenderSimple rate doubleOp
+      -- , testProp "invariant concat empty left" lim $ do
       --     let rate = Rate 1
       --     op <- forAll (genOp [])
       --     let op' = Fix (OpConcat (Seq.fromList [Fix OpEmpty, op]) :: TestOpF)

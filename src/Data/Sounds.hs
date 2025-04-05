@@ -157,8 +157,8 @@ newtype InternalSamples = InternalSamples {unInternalSamples :: PrimArray Int32}
 isampsEmpty :: InternalSamples
 isampsEmpty = InternalSamples emptyPrimArray
 
-isampsIsNull :: InternalSamples -> Bool
-isampsIsNull = (0 ==) . isampsBytes
+isampsNull :: InternalSamples -> Bool
+isampsNull = (0 ==) . isampsBytes
 
 isampsLength :: InternalSamples -> ElemCount
 isampsLength = ElemCount . sizeofPrimArray . unInternalSamples
@@ -593,11 +593,14 @@ orShift _rate c rsamp = Samples $ \arc ->
 
 orConcat :: Rate -> Seq (Anno Extent Samples) -> Samples
 orConcat rate rs =
-  let gather (d, t, a) (Anno l g) =
+  let gather dta@(d, t, a) (Anno l g) =
         let q = extentLen l
-            d' = d + q
-            t' = addDelta t q
-        in  (d', t', a :|> (d, Arc t t', g))
+        in  if q <= 0
+              then dta
+              else
+                let d' = d + q
+                    t' = addDelta t q
+                in  (d', t', a :|> (d, Arc t t', g))
       (_, tot, subArcs) = foldl' gather (0, 0, Empty) rs
       whole = Arc 0 tot
   in  Samples $ \arc@(Arc s e) ->
