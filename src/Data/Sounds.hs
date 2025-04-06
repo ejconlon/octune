@@ -357,10 +357,13 @@ newtype Rate = Rate {unRate :: Rational}
 
 instance Quantize Time Rate where
   quantize (Rate r) (Arc (Time s) (Time e)) =
-    let len = e - s
-        numSamples = if len == 0 then 0 else ceiling (len * r)
-        start = floor (s * r)
-    in Arc start (start + numSamples)
+    let qstart = floor (s * r)
+    in  if s == e
+          then Arc qstart qstart
+          else
+            let qlen = ceiling ((e - s) * r)
+                qend = qstart + qlen
+            in  Arc qstart qend
   unquantize (Rate r) (Arc s e) = Arc (Time (fromIntegral s / r)) (Time (fromIntegral e / r))
 
 -- | A number of repetitions represented as a rational number.
@@ -734,9 +737,9 @@ orRepeat rate n rext rsamp =
                             let relArc = Arc (addDelta (arcStart subArc) (negate repDelta)) (addDelta (arcEnd subArc) (negate repDelta))
                             in  runSamples rsamp relArc
                     allSamps =
-                      [arrEmptyDelta rate negDelta] ++
-                      map renderRep [firstN .. cappedN - 1] ++
-                      [arrEmptyDelta rate beyondMax]
+                      [arrEmptyDelta rate negDelta]
+                        ++ map renderRep [firstN .. cappedN - 1]
+                        ++ [arrEmptyDelta rate beyondMax]
                   in
                     isampsConcat allSamps
 
