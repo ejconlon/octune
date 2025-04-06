@@ -232,10 +232,10 @@ isampsFromWave = InternalSamples . (\(ByteArray x) -> PrimArray x) . unLiftedPri
 
 -- | A stream of samples that can be repeated.
 data SampleStream = SampleStream
-  { -- | The fixed portion of the stream
-    ssFixed :: !InternalSamples
-    -- | The repeated portion of the stream
+  { ssFixed :: !InternalSamples
+  -- ^ The fixed portion of the stream
   , ssRepeated :: !InternalSamples
+  -- ^ The repeated portion of the stream
   }
   deriving stock (Eq, Show)
 
@@ -318,6 +318,7 @@ dumpAllSamples = do
 class (Ord t, Ord d, Num d) => Measure t d | t -> d where
   -- | Calculate the distance between two points.
   measureDelta :: t -> t -> d
+
   -- | Add a delta to a point.
   addDelta :: t -> d -> t
 
@@ -329,6 +330,7 @@ instance Measure ElemCount ElemCount where
 class (Ord t, Ord r) => Quantize t r | t -> r where
   -- | Convert a continuous time arc to a discrete arc.
   quantize :: (Integral u) => r -> Arc t -> Arc u
+
   -- | Convert a discrete arc back to a continuous time arc.
   unquantize :: (Integral u) => r -> Arc u -> Arc t
 
@@ -366,11 +368,14 @@ mulReps :: (Fractional d) => Reps -> d -> d
 mulReps (Reps n) d = fromRational n * d
 
 -- | A half-open interval [start, end) representing a range of values.
+-- Invariants:
+--   * For any Arc t, arcStart t <= arcEnd t
+--   * An arc is empty (arcNull) if and only if arcStart t == arcEnd t
 data Arc t = Arc
-  { -- | The start of the interval (inclusive)
-    arcStart :: !t
-    -- | The end of the interval (exclusive)
+  { arcStart :: !t
+  -- ^ The start of the interval (inclusive)
   , arcEnd :: !t
+  -- ^ The end of the interval (exclusive)
   }
   deriving stock (Eq, Ord, Show)
 
@@ -415,6 +420,10 @@ arcRepeat :: (Measure t d, Fractional d) => Reps -> Arc t -> Arc t
 arcRepeat n (Arc s e) = Arc s (addDelta s (mulReps n (measureDelta s e)))
 
 -- | Calculate how many times a delta fits into an arc.
+-- Returns a tuple of:
+--   * The amount of negative time before the first repetition
+--   * The index of the first repetition that overlaps the arc
+--   * The index of the last repetition that overlaps the arc
 arcDeltaCover :: (Measure t d, Real t, RealFrac d) => d -> Arc t -> Maybe (d, Integer, Integer)
 arcDeltaCover d (Arc s e) =
   if s >= e || d <= 0
@@ -427,9 +436,15 @@ arcDeltaCover d (Arc s e) =
         firstN = if s < 0 then 0 else floor (toRational s / toRational d)
         -- Find the smallest n where n*d ≥ e
         lastN = ceiling (toRational e / toRational d)
-      in Just (negDelta, firstN, lastN)
+      in
+        Just (negDelta, firstN, lastN)
 
 -- | Calculate how many times a delta fits into an arc, with a maximum number of repetitions.
+-- Returns a tuple of:
+--   * The amount of negative time before the first repetition
+--   * The index of the first repetition that overlaps the arc
+--   * The index of the last repetition that overlaps the arc (capped by maxReps)
+--   * The amount of time beyond the last repetition that overlaps the arc
 arcDeltaCoverMax :: (Measure t d, Real t, RealFrac d) => d -> Reps -> Arc t -> Maybe (d, Integer, Integer, d)
 arcDeltaCoverMax d maxReps arc =
   if maxReps <= 0
@@ -444,7 +459,16 @@ arcDeltaCoverMax d maxReps arc =
       pure (negDelta, firstN, cappedN, beyondMax)
 
 -- | Describes how two arcs overlap.
-data Overlap t d = OverlapLt | OverlapOn !d !(Arc t) !d | OverlapGt
+data Overlap t d
+  = -- | The first arc is entirely before the second arc
+    OverlapLt
+  | -- | The arcs overlap, with:
+    --   * The amount of time before the overlap
+    --   * The overlapping portion
+    --   * The amount of time after the overlap
+    OverlapOn !d !(Arc t) !d
+  | -- | The first arc is entirely after the second arc
+    OverlapGt
   deriving stock (Eq, Ord, Show)
 
 -- | Calculate how two arcs overlap.
@@ -461,6 +485,10 @@ arcOverlap (Arc ns ne) (Arc hs he) =
         in  OverlapOn before (Arc xs xe) after
 
 -- | Calculate the relative position of one arc within another.
+-- Returns a tuple of:
+--   * The amount of time before the first arc that's in the second arc
+--   * The overlapping portion of the arcs
+--   * The amount of time after the first arc that's in the second arc
 arcRelative :: (Measure t d, Num t) => Arc t -> Arc t -> Maybe (d, Arc t, d)
 arcRelative (Arc ns ne) (Arc hs he) =
   let s = max hs (addDelta hs (measureDelta 0 ns))
@@ -495,20 +523,20 @@ arcNarrow rel@(Arc rs _) base@(Arc bs _) =
 data OpF n r
   = -- | An empty operation that produces no sound.
     OpEmpty
-    -- | A constant sample value.
-  | OpSamp !InternalSamples
-    -- | Shift an operation in time.
-  | OpShift !Delta r
-    -- | Repeat an operation a number of times.
-  | OpRepeat !Reps r
-    -- | Slice a portion of an operation.
-  | OpSlice !(Arc Time) r
-    -- | Concatenate multiple operations in sequence.
-  | OpConcat !(Seq r)
-    -- | Merge multiple operations by mixing their samples.
-  | OpMerge !(Seq r)
-    -- | Reference another operation by name.
-  | OpRef !n
+  | -- | A constant sample value.
+    OpSamp !InternalSamples
+  | -- | Shift an operation in time.
+    OpShift !Delta r
+  | -- | Repeat an operation a number of times.
+    OpRepeat !Reps r
+  | -- | Slice a portion of an operation.
+    OpSlice !(Arc Time) r
+  | -- | Concatenate multiple operations in sequence.
+    OpConcat !(Seq r)
+  | -- | Merge multiple operations by mixing their samples.
+    OpMerge !(Seq r)
+  | -- | Reference another operation by name.
+    OpRef !n
   deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
 -- | A fixed point of the OpF functor.
@@ -676,26 +704,29 @@ orRepeat rate n rext rsamp =
       Nothing -> Samples (arrEmpty rate)
       Just sarc ->
         let repLen = arcLen sarc
-        in Samples $ \arc ->
-          case arcDeltaCoverMax repLen n arc of
-            Nothing -> arrEmpty rate arc
-            Just (negDelta, firstN, cappedN, beyondMax) ->
-              let
-                renderRep rep =
+        in  Samples $ \arc ->
+              case arcDeltaCoverMax repLen n arc of
+                Nothing -> arrEmpty rate arc
+                Just (negDelta, firstN, cappedN, beyondMax) ->
                   let
-                    repDelta = Delta (fromInteger rep * unDelta repLen)
-                    repArc = Arc (addDelta (arcStart sarc) repDelta) (addDelta (arcEnd sarc) repDelta)
-                  in case arcIntersect arc repArc of
-                    Nothing -> isampsEmpty
-                    Just subArc ->
-                      let relArc = Arc (addDelta (arcStart subArc) (negate repDelta)) (addDelta (arcEnd subArc) (negate repDelta))
-                      in runSamples rsamp relArc
-                allSamps =
-                  [ arrEmpty rate (Arc (arcStart arc) (addDelta (arcStart arc) negDelta))
-                  ] ++ map renderRep [firstN .. cappedN - 1] ++
-                  [ arrEmpty rate (Arc (addDelta (arcEnd arc) (negate beyondMax)) (arcEnd arc))
-                  ]
-              in isampsConcat allSamps
+                    renderRep rep =
+                      let
+                        repDelta = Delta (fromInteger rep * unDelta repLen)
+                        repArc = Arc (addDelta (arcStart sarc) repDelta) (addDelta (arcEnd sarc) repDelta)
+                      in
+                        case arcIntersect arc repArc of
+                          Nothing -> isampsEmpty
+                          Just subArc ->
+                            let relArc = Arc (addDelta (arcStart subArc) (negate repDelta)) (addDelta (arcEnd subArc) (negate repDelta))
+                            in  runSamples rsamp relArc
+                    allSamps =
+                      [ arrEmpty rate (Arc (arcStart arc) (addDelta (arcStart arc) negDelta))
+                      ]
+                        ++ map renderRep [firstN .. cappedN - 1]
+                        ++ [ arrEmpty rate (Arc (addDelta (arcEnd arc) (negate beyondMax)) (arcEnd arc))
+                           ]
+                  in
+                    isampsConcat allSamps
 
 -- | Create a sample generator that slices another generator.
 orSlice :: Rate -> Arc Time -> Samples -> Samples
@@ -782,10 +813,10 @@ opRenderSimple rate op = do
 
 -- | A view of an array with bounds.
 data View z = View
-  { -- | The bounds of the view
-    viewBounds :: !(Arc ElemCount)
-    -- | The array being viewed
+  { viewBounds :: !(Arc ElemCount)
+  -- ^ The bounds of the view
   , viewArray :: !z
+  -- ^ The array being viewed
   }
   deriving stock (Eq, Ord, Show)
 
