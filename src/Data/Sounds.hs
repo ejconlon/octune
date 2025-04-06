@@ -356,7 +356,11 @@ newtype Rate = Rate {unRate :: Rational}
   deriving newtype (Num, Ord, Enum, Real, Fractional, RealFrac)
 
 instance Quantize Time Rate where
-  quantize (Rate r) (Arc (Time s) (Time e)) = Arc (ceiling (s * r)) (ceiling (e * r))
+  quantize (Rate r) (Arc (Time s) (Time e)) =
+    let len = e - s
+        numSamples = if len == 0 then 0 else ceiling (len * r)
+        start = floor (s * r)
+    in Arc start (start + numSamples)
   unquantize (Rate r) (Arc s e) = Arc (Time (fromIntegral s / r)) (Time (fromIntegral e / r))
 
 -- | A number of repetitions represented as a rational number.

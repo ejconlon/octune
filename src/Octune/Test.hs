@@ -38,12 +38,14 @@ import Data.Sounds
   , opRenderSingleOn
   , opRenderTopo
   , quantize
+  , arcShift
   )
 import Data.Topo (SortErr, topoSort)
 import Data.Traversable (for)
 import PropUnit (Gen, TestLimit, TestTree, assert, forAll, testGroup, testMain, testProp, testUnit, (===))
 import PropUnit.Hedgehog.Gen qualified as Gen
 import PropUnit.Hedgehog.Range qualified as Range
+import Data.List (sort)
 
 topoSortSimple :: [(Int, [Int])] -> Either (SortErr Int) (Seq Int)
 topoSortSimple deps = topoSort (fmap Set.fromList . flip lookup deps) (fmap fst deps)
@@ -81,8 +83,8 @@ topoSortTests lim =
 
 type TestOpF = OpF Char (Fix (OpF Char))
 
-utilTests :: TestTree
-utilTests =
+utilTests :: TestLimit -> TestTree
+utilTests lim =
   testGroup
     "util"
     [ testUnit "arcRelative empty" $ do
@@ -171,7 +173,39 @@ utilTests =
     , testUnit "arcDeltaCoverMax fractional reps" $ do
         arcDeltaCoverMax @Time 1 1.5 (Arc 0 2) === Just (0, 0, 2, 0.5)
         arcDeltaCoverMax @Time 1 2.5 (Arc 0 3) === Just (0, 0, 3, 0.5)
-    , testUnit "quantize" $ do
+    , testProp "prop quantize invariance" lim $ do
+      let genReal = Gen.realFrac_ (Range.linearFracFrom 0 (-100) 100)
+          genSmallPosReal = Gen.realFrac_ (Range.linearFrac 1 10)
+      rate <- forAll (fmap Rate genSmallPosReal)
+      a0 <- forAll (fmap Time genReal)
+      b0 <- forAll (fmap Time genReal)
+      let ab = sort [a0, b0]
+          arc = Arc (ab !! 0) (ab !! 1)
+      d <- forAll (fmap Delta genReal)
+      let qbefore = quantize @Time @_ @ElemCount rate arc
+          lbefore = arcLen @ElemCount qbefore
+      let qafter = quantize @Time @_ @ElemCount rate (arcShift arc d)
+          lafter = arcLen @ElemCount qafter
+      lafter === lbefore
+    , testProp "prop quantize split" lim $ do
+      let genReal = Gen.realFrac_ (Range.linearFracFrom 0 (-100) 100)
+          genSmallPosReal = Gen.realFrac_ (Range.linearFrac 1 10)
+      rate <- forAll (fmap Rate genSmallPosReal)
+      a0 <- forAll (fmap Time genReal)
+      b0 <- forAll (fmap Time genReal)
+      c0 <- forAll (fmap Time genReal)
+      let abc = sort [a0, b0, c0]
+          arcLeft = Arc (abc !! 0) (abc !! 1)
+          arcRight = Arc (abc !! 1) (abc !! 2)
+          arcWhole = Arc (abc !! 0) (abc !! 2)
+      let qLeft = quantize @Time @_ @ElemCount rate arcLeft
+          lLeft = arcLen @ElemCount qLeft
+      let qRight = quantize @Time @_ @ElemCount rate arcRight
+          lRight = arcLen @ElemCount qRight
+      let qWhole = quantize @Time @_ @ElemCount rate arcWhole
+          lWhole = arcLen @ElemCount qWhole
+      lLeft + lRight === lWhole
+    , testUnit "quantize cases" $ do
         let rate = Rate 1
         -- Test basic negative arc
         quantize @Time @_ @ElemCount rate (Arc (-1) 0) === Arc (-1) 0
@@ -368,7 +402,7 @@ main = testMain $ \lim ->
   testGroup
     "suite"
     [ topoSortTests lim
-    , utilTests
+    , utilTests lim
     , opTests lim
     ]
 
