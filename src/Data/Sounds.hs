@@ -358,6 +358,33 @@ arcShift (Arc s e) d = Arc (addDelta s d) (addDelta e d)
 arcRepeat :: (Measure t d, Fractional d) => Reps -> Arc t -> Arc t
 arcRepeat n (Arc s e) = Arc s (addDelta s (mulReps n (measureDelta s e)))
 
+arcDeltaCover :: (Measure t d, Real t, RealFrac d) => d -> Arc t -> Maybe (d, Integer, Integer)
+arcDeltaCover d (Arc s e) =
+  if s >= e || d <= 0
+    then Nothing
+    else
+      let
+        -- Calculate how much of the arc is in negative time
+        negDelta = if s < 0 then measureDelta s 0 else 0
+        -- Find the greatest n where n*d ≤ s
+        firstN = if s < 0 then 0 else floor (toRational s / toRational d)
+        -- Find the smallest n where n*d ≥ e
+        lastN = ceiling (toRational e / toRational d)
+      in Just (negDelta, firstN, lastN)
+
+arcDeltaCoverMax :: (Measure t d, Real t, RealFrac d) => d -> Reps -> Arc t -> Maybe (d, Integer, Integer, d)
+arcDeltaCoverMax d maxReps arc =
+  if maxReps <= 0
+    then Nothing
+    else do
+      let intMaxReps = ceiling maxReps
+      (negDelta, firstN, lastN) <- arcDeltaCover d arc
+      let (cappedN, beyondMax) =
+            if lastN >= intMaxReps
+              then (intMaxReps, measureDelta (addDelta 0 (fromRational (unReps maxReps) * d)) (arcEnd arc))
+              else (lastN, 0)
+      pure (negDelta, firstN, cappedN, beyondMax)
+
 data Overlap t d = OverlapLt | OverlapOn !d !(Arc t) !d | OverlapGt
   deriving stock (Eq, Ord, Show)
 
@@ -547,31 +574,28 @@ orRepeat rate n rext rsamp =
     then Samples (arrEmpty rate)
     else case extentPosArc rext of
       Nothing -> Samples (arrEmpty rate)
-      Just sarc -> Samples $ \arc ->
-        let
-          -- Get the total length of one repetition
-          repLen = arcLen sarc
-          -- Get the relative position within the total length
-          relPos = arcStart arc
-          -- Get the number of full repetitions before the start
-          fullReps = floor (unTime relPos / unDelta repLen)
-          -- Get the offset within a single repetition
-          repOff = Time (unTime relPos - fromInteger fullReps * unDelta repLen)
-          -- Get the length we need to generate
-          genLen = arcLen arc
-          -- Calculate how many full repetitions we need
-          numReps = ceiling (unDelta genLen / unDelta repLen) + 1
-          -- Get the minimal sub-arc we need to generate
-          subArc = arcFrom repOff repLen
-          -- Generate the base samples
-          baseSamps = runSamples rsamp subArc
-          -- Generate all repetitions
-          allReps = isampsReplicate numReps baseSamps
-          -- Trim to the exact length needed
-          trimOff = ElemCount (unElemCount (arcLen @ElemCount (quantize rate (Arc 0 relPos))))
-          trimLen = ElemCount (unElemCount (arcLen @ElemCount (quantize rate arc)))
-        in
-          isampsTrim trimOff trimLen allReps
+      Just sarc ->
+        let repLen = arcLen sarc
+        in Samples $ \arc ->
+          case arcDeltaCoverMax repLen n arc of
+            Nothing -> arrEmpty rate arc
+            Just (negDelta, firstN, cappedN, beyondMax) ->
+              let
+                renderRep rep =
+                  let
+                    repDelta = Delta (fromInteger rep * unDelta repLen)
+                    repArc = Arc (addDelta (arcStart sarc) repDelta) (addDelta (arcEnd sarc) repDelta)
+                  in case arcIntersect arc repArc of
+                    Nothing -> isampsEmpty
+                    Just subArc ->
+                      let relArc = Arc (addDelta (arcStart subArc) (negate repDelta)) (addDelta (arcEnd subArc) (negate repDelta))
+                      in runSamples rsamp relArc
+                allSamps =
+                  [ arrEmpty rate (Arc (arcStart arc) (addDelta (arcStart arc) negDelta))
+                  ] ++ map renderRep [firstN .. cappedN - 1] ++
+                  [ arrEmpty rate (Arc (addDelta (arcEnd arc) (negate beyondMax)) (arcEnd arc))
+                  ]
+              in isampsConcat allSamps
 
 orSlice :: Rate -> Arc Time -> Samples -> Samples
 orSlice rate sarc rsamp =

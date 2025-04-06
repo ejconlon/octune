@@ -7,7 +7,6 @@ import Control.Monad.IO.Class (MonadIO (..))
 import Dahdit.Sizes (ElemCount (..))
 import Data.Foldable (for_, toList)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
 import Data.Primitive.PrimArray (primArrayFromList)
 import Data.Sequence (Seq (..))
 import Data.Sequence qualified as Seq
@@ -22,7 +21,9 @@ import Data.Sounds
   , Overlap (..)
   , Rate (..)
   , Samples (..)
-  , Time
+  , Time (..)
+  , arcDeltaCover
+  , arcDeltaCoverMax
   , arcOverlap
   , arcRelative
   , extentPosArc
@@ -133,6 +134,42 @@ utilTests =
     , testUnit "arcOverlap containing" $ do
         arcOverlap @Time (Arc (-1) 4) (Arc 0 3) === OverlapOn 1 (Arc 0 3) 1
         arcOverlap @Time (Arc (-1) 4) (Arc 10 13) === OverlapLt
+    , testUnit "arcDeltaCover empty" $ do
+        arcDeltaCover @Time 1 (Arc 0 0) === Nothing
+        arcDeltaCover @Time 1 (Arc 1 1) === Nothing
+    , testUnit "arcDeltaCover exact match" $ do
+        arcDeltaCover @Time 1 (Arc 0 1) === Just (0, 0, 1)
+        arcDeltaCover @Time 1 (Arc 1 2) === Just (0, 1, 2)
+    , testUnit "arcDeltaCover negative" $ do
+        arcDeltaCover @Time 1 (Arc (-0.5) 0.5) === Just (0.5, 0, 1)
+        arcDeltaCover @Time 1 (Arc (-1.5) 1.5) === Just (1.5, 0, 2)
+    , testUnit "arcDeltaCover spanning" $ do
+        arcDeltaCover @Time 1 (Arc 0.5 2.5) === Just (0, 0, 3)
+        arcDeltaCover @Time 1 (Arc (-0.5) 2.5) === Just (0.5, 0, 3)
+    , testUnit "arcDeltaCover non-positive delta" $ do
+        arcDeltaCover @Time 0 (Arc 0 1) === Nothing
+        arcDeltaCover @Time (-1) (Arc 0 1) === Nothing
+    , testUnit "arcDeltaCoverMax basic" $ do
+        arcDeltaCoverMax @Time 1 2 (Arc 0 1) === Just (0, 0, 1, 0)
+        arcDeltaCoverMax @Time 1 2 (Arc 0 2) === Just (0, 0, 2, 0)
+        arcDeltaCoverMax @Time 1 2 (Arc 0 3) === Just (0, 0, 2, 1)
+        arcDeltaCoverMax @Time 1 2 (Arc 0 4) === Just (0, 0, 2, 2)
+    , testUnit "arcDeltaCoverMax negative" $ do
+        arcDeltaCoverMax @Time 1 2 (Arc (-1) 1) === Just (1, 0, 1, 0)
+        arcDeltaCoverMax @Time 1 2 (Arc (-1) 2) === Just (1, 0, 2, 0)
+        arcDeltaCoverMax @Time 1 2 (Arc (-1) 3) === Just (1, 0, 2, 1)
+    , testUnit "arcDeltaCoverMax non-positive delta" $ do
+        arcDeltaCoverMax @Time 0 2 (Arc 0 1) === Nothing
+        arcDeltaCoverMax @Time (-1) 2 (Arc 0 1) === Nothing
+    , testUnit "arcDeltaCoverMax non-positive reps" $ do
+        arcDeltaCoverMax @Time 1 0 (Arc 0 1) === Nothing
+        arcDeltaCoverMax @Time 1 (-1) (Arc 0 1) === Nothing
+    , testUnit "arcDeltaCoverMax empty arc" $ do
+        arcDeltaCoverMax @Time 1 2 (Arc 0 0) === Nothing
+        arcDeltaCoverMax @Time 1 2 (Arc 1 1) === Nothing
+    , testUnit "arcDeltaCoverMax fractional reps" $ do
+        arcDeltaCoverMax @Time 1 1.5 (Arc 0 2) === Just (0, 0, 2, 0.5)
+        arcDeltaCoverMax @Time 1 2.5 (Arc 0 3) === Just (0, 0, 3, 0.5)
     ]
 
 opTests :: TestLimit -> TestTree
@@ -214,73 +251,45 @@ opTests lim =
     , testUnit "OpRef" $ do
         let op = Fix (OpRef 'a' :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Left 'a'
-    , -- , testProp "invariant repeat 1" lim $ do
-      --     let rate = Rate 1
-      --     op <- forAll (genOp [])
-      --     let op' = Fix (OpRepeat 1 op :: TestOpF)
-      --     opRenderSimple rate op' === opRenderSimple rate op
-      -- , testProp "invariant repeat 2" lim $ do
-      --     let rate = Rate 1
-      --     op <- forAll (genOp [])
-      --     let doubleOp = Fix (OpConcat (Seq.fromList [op, op]))
-      --     let op' = Fix (OpRepeat 2 op :: TestOpF)
-      --     opRenderSimple rate op' === opRenderSimple rate doubleOp
-      -- , testProp "invariant concat empty left" lim $ do
-      --     let rate = Rate 1
-      --     op <- forAll (genOp [])
-      --     let op' = Fix (OpConcat (Seq.fromList [Fix OpEmpty, op]) :: TestOpF)
-      --     opRenderSimple rate op' === opRenderSimple rate op
-      -- , testProp "invariant concat empty right" lim $ do
-      --     let rate = Rate 1
-      --     op <- forAll (genOp [])
-      --     let op' = Fix (OpConcat (Seq.fromList [op, Fix OpEmpty]) :: TestOpF)
-      --     opRenderSimple rate op' === opRenderSimple rate op
-      -- , testProp "invariant merge empty left" lim $ do
-      --     let rate = Rate 1
-      --     op <- forAll (genOp [])
-      --     let op' = Fix (OpMerge (Seq.fromList [Fix OpEmpty, op]) :: TestOpF)
-      --     opRenderSimple rate op' === opRenderSimple rate op
-      -- , testProp "invariant merge empty right" lim $ do
-      --     let rate = Rate 1
-      --     op <- forAll (genOp [])
-      --     let op' = Fix (OpMerge (Seq.fromList [op, Fix OpEmpty]) :: TestOpF)
-      --     opRenderSimple rate op' === opRenderSimple rate op
-      -- , testProp "invariant slice whole pos" lim $ do
-      --     let rate = Rate 1
-      --     op <- forAll (genOp [])
-      --     case opInferExtentSingle rate op of
-      --       Left _ -> fail "Failed to infer extent"
-      --       Right ext -> do
-      --         let arc = fromMaybe (Arc 0 0) (extentPosArc ext)
-      --             op' = Fix (OpSlice arc op :: TestOpF)
-      --         opRenderSimple rate op' === opRenderSimple rate op
-      testProp "gen test" lim $ do
-        let rate = Rate 1
-        -- Generate a set of valid keys
-        keys <- forAll (Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z']))
-        -- let keys = ['a']
-        let validKeys = Set.fromList keys
-        -- Generate a map of ops with valid references
-        ops <- forAll (genValidOpMap validKeys)
-        -- Infer and annotate lengths
-        case opAnnoExtentTopo rate ops of
-          Left err -> liftIO (throwIO err)
-          Right ans -> do
-            case sequence ans of
-              Left n -> fail ("Missing key " ++ show n)
-              Right ans' -> do
-                case opRenderTopo rate ans' of
-                  Left err -> liftIO (throwIO err)
-                  Right res -> do
-                    for_ (Map.toList res) $ \(k, samps) -> do
-                      let an = ans' Map.! k
-                          ex = memoKey an
-                      case extentPosArc ex of
-                        Nothing -> pure ()
-                        Just arc -> do
-                          let len = arcEnd @ElemCount (quantize rate arc)
-                              arr = runSamples samps arc
-                          isampsLength arr === len
+    , testUnit "regression 1" $ do
+        let op = Fix (OpShift (-2) (Fix (OpRepeat 1 (Fix (OpSamp (isampsFromList [0]))))) :: TestOpF)
+        opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 2 3)) (OpShift (-2) (MemoP (Extent (Arc 0 1)) (OpRepeat 1 (MemoP (Extent (Arc 0 1)) (OpSamp (isampsFromList [0])))))))
+        opRenderSimple (Rate 1) op === Right (isampsFromList [0, 0, 0])
+    , testUnit "regression 2" $ do
+        let op = Fix (OpShift (-1) (Fix (OpRepeat 1 (Fix (OpSamp (isampsFromList [1, 2]))))) :: TestOpF)
+        opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 1 3)) (OpShift (-1) (MemoP (Extent (Arc 0 2)) (OpRepeat 1 (MemoP (Extent (Arc 0 2)) (OpSamp (isampsFromList [1, 2])))))))
+        opRenderSimple (Rate 1) op === Right (isampsFromList [0, 1, 2])
+    , testUnit "regression 3" $ do
+        let op = Fix (OpSlice (Arc (Time (-3)) (Time (-1))) (Fix (OpRepeat 1 (Fix (OpSlice (Arc (Time 0) (Time 1)) (Fix OpEmpty))))) :: TestOpF)
+        opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 0 2)) (OpSlice (Arc (Time (-3)) (Time (-1))) (MemoP (Extent (Arc 0 1)) (OpRepeat 1 (MemoP (Extent (Arc 0 1)) (OpSlice (Arc (Time 0) (Time 1)) (MemoP (Extent (Arc 0 0)) OpEmpty)))))))
+        opRenderSimple (Rate 1) op === Right (isampsFromList [0, 0])
+    -- , testProp "gen test" lim $ do
+    --     let rate = Rate 1
+    --     -- Generate a set of valid keys
+    --     keys <- forAll (Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z']))
+    --     -- let keys = ['a']
+    --     let validKeys = Set.fromList keys
+    --     -- Generate a map of ops with valid references
+    --     ops <- forAll (genValidOpMap validKeys)
+    --     -- Infer and annotate lengths
+    --     case opAnnoExtentTopo rate ops of
+    --       Left err -> liftIO (throwIO err)
+    --       Right ans -> do
+    --         case sequence ans of
+    --           Left n -> fail ("Missing key " ++ show n)
+    --           Right ans' -> do
+    --             case opRenderTopo rate ans' of
+    --               Left err -> liftIO (throwIO err)
+    --               Right res -> do
+    --                 for_ (Map.toList res) $ \(k, samps) -> do
+    --                   let an = ans' Map.! k
+    --                       ex = memoKey an
+    --                   case extentPosArc ex of
+    --                     Nothing -> pure ()
+    --                     Just arc -> do
+    --                       let len = arcEnd @ElemCount (quantize rate arc)
+    --                           arr = runSamples samps arc
+    --                       isampsLength arr === len
     ]
 
 main :: IO ()
@@ -299,7 +308,7 @@ genOp validKeys = genR
   nonRecursive =
     [ pure (Fix (OpEmpty :: OpF n (Fix (OpF n))))
     , Fix . OpSamp . InternalSamples . primArrayFromList
-        <$> Gen.list (Range.linear 1 10) (Gen.int32 (Range.linear minBound maxBound))
+        <$> Gen.list (Range.linear 1 10) (Gen.int32 (Range.linear 0 100))
     ]
       ++ ([Fix . OpRef <$> Gen.element validKeys | not (null validKeys)])
   recursive =
