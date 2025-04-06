@@ -421,7 +421,7 @@ arcRepeat n (Arc s e) = Arc s (addDelta s (mulReps n (measureDelta s e)))
 
 -- | Calculate how many times a delta fits into an arc.
 -- Returns a tuple of:
---   * The amount of negative time before the first repetition
+--   * The amount of negative time before the first repetition (always non-negative)
 --   * The index of the first repetition that overlaps the arc
 --   * The index of the last repetition that overlaps the arc
 arcDeltaCover :: (Measure t d, Real t, RealFrac d) => d -> Arc t -> Maybe (d, Integer, Integer)
@@ -441,10 +441,10 @@ arcDeltaCover d (Arc s e) =
 
 -- | Calculate how many times a delta fits into an arc, with a maximum number of repetitions.
 -- Returns a tuple of:
---   * The amount of negative time before the first repetition
+--   * The amount of negative time before the first repetition (always non-negative)
 --   * The index of the first repetition that overlaps the arc
 --   * The index of the last repetition that overlaps the arc (capped by maxReps)
---   * The amount of time beyond the last repetition that overlaps the arc
+--   * The amount of time beyond the last repetition that overlaps the arc (always non-negative)
 arcDeltaCoverMax :: (Measure t d, Real t, RealFrac d) => d -> Reps -> Arc t -> Maybe (d, Integer, Integer, d)
 arcDeltaCoverMax d maxReps arc =
   if maxReps <= 0
@@ -472,6 +472,7 @@ data Overlap t d
   deriving stock (Eq, Ord, Show)
 
 -- | Calculate how two arcs overlap.
+-- The returned time measurements (before and after) are always non-negative.
 arcOverlap :: (Measure t d) => Arc t -> Arc t -> Overlap t d
 arcOverlap (Arc ns ne) (Arc hs he) =
   if
@@ -485,22 +486,27 @@ arcOverlap (Arc ns ne) (Arc hs he) =
         in  OverlapOn before (Arc xs xe) after
 
 -- | Calculate the relative position of one arc within another.
--- Returns a tuple of:
---   * The amount of time before the first arc that's in the second arc
+-- Note that the first arc is _relative_ to the second, meaning that you
+-- can interpret the first arc's components as 'Arc offset (offset + length)'.
+-- Example: 'arcRelative (Arc 1 2) (Arc 10 15) == Just (0, Arc 10 13, 0)'.
+-- Example: 'arcRelative (Arc (-1) 8) (Arc 10 15) == Just (1, Arc 10 15, 2)'.
+-- Returns Just a tuple of:
+--   * The amount of time before the second arc that's in the first arc (always non-negative)
 --   * The overlapping portion of the arcs
---   * The amount of time after the first arc that's in the second arc
+--   * The amount of time after the second arc that's in the first arc (always non-negative)
+-- Or Nothing if the resulting arc is empty.
+-- Invariants:
+--   * The returned arc is contained within the second arc.
+--   * The sum of the returned deltas and arc length is equal to the length of the first arc.
 arcRelative :: (Measure t d, Num t) => Arc t -> Arc t -> Maybe (d, Arc t, d)
-arcRelative (Arc ns ne) (Arc hs he) =
-  let s = max hs (addDelta hs (measureDelta 0 ns))
-      e = min he (addDelta hs (measureDelta 0 ne))
+arcRelative (Arc off offLen) (Arc s0 e0) =
+  let s1 = s0 + off
+      e1 = s0 + offLen
+      s = max s0 s1
+      e = min e0 e1
   in  if s >= e
         then Nothing
-        else
-          Just
-            ( max 0 (measureDelta ns (addDelta 0 (measureDelta hs s)))
-            , Arc s e
-            , max 0 (measureDelta (addDelta 0 (measureDelta hs e)) ne)
-            )
+        else Just (measureDelta s1 s, Arc s e, measureDelta e e1)
 
 -- | Skip a given amount from the start of an arc.
 arcSkip :: (Measure t d) => d -> Arc t -> Maybe (Arc t)
@@ -667,12 +673,16 @@ opAnnoExtentTopo rate m = topoAnnoM opRefs m (opInferExtentF rate)
 newtype Samples = Samples {runSamples :: Arc Time -> InternalSamples}
 
 -- | Create empty samples for a given arc.
-arrEmpty :: Rate -> Arc Time -> InternalSamples
-arrEmpty rate arc = isampsConstant (arcLen @ElemCount (quantize rate arc)) 0
+arrEmptyArc :: Rate -> Arc Time -> InternalSamples
+arrEmptyArc rate arc = isampsConstant (arcLen @ElemCount (quantize rate arc)) 0
+
+-- | Create empty samples for a given delta.
+arrEmptyDelta :: Rate -> Delta -> InternalSamples
+arrEmptyDelta rate d = isampsConstant (arcLen @ElemCount (quantize @Time rate (arcFrom 0 d))) 0
 
 -- | Create an empty sample generator.
 orEmpty :: Rate -> Samples
-orEmpty = Samples . arrEmpty
+orEmpty = Samples . arrEmptyArc
 
 -- | Create a sample generator from constant samples.
 orSamp :: Rate -> InternalSamples -> Samples
@@ -699,14 +709,14 @@ orSamp rate x =
 orRepeat :: Rate -> Reps -> Extent -> Samples -> Samples
 orRepeat rate n rext rsamp =
   if n <= 0
-    then Samples (arrEmpty rate)
+    then Samples (arrEmptyArc rate)
     else case extentPosArc rext of
-      Nothing -> Samples (arrEmpty rate)
+      Nothing -> Samples (arrEmptyArc rate)
       Just sarc ->
         let repLen = arcLen sarc
         in  Samples $ \arc ->
               case arcDeltaCoverMax repLen n arc of
-                Nothing -> arrEmpty rate arc
+                Nothing -> arrEmptyArc rate arc
                 Just (negDelta, firstN, cappedN, beyondMax) ->
                   let
                     renderRep rep =
@@ -720,10 +730,10 @@ orRepeat rate n rext rsamp =
                             let relArc = Arc (addDelta (arcStart subArc) (negate repDelta)) (addDelta (arcEnd subArc) (negate repDelta))
                             in  runSamples rsamp relArc
                     allSamps =
-                      [ arrEmpty rate (Arc (arcStart arc) (addDelta (arcStart arc) negDelta))
+                      [ arrEmptyDelta rate negDelta
                       ]
                         ++ map renderRep [firstN .. cappedN - 1]
-                        ++ [ arrEmpty rate (Arc (addDelta (arcEnd arc) (negate beyondMax)) (arcEnd arc))
+                        ++ [ arrEmptyDelta rate beyondMax
                            ]
                   in
                     isampsConcat allSamps
@@ -732,16 +742,16 @@ orRepeat rate n rext rsamp =
 orSlice :: Rate -> Arc Time -> Samples -> Samples
 orSlice rate sarc rsamp =
   if arcNull sarc
-    then Samples (arrEmpty rate)
+    then Samples (arrEmptyArc rate)
     else Samples $ \arc ->
       case arcRelative arc sarc of
         Just (before, arc', after) ->
-          let preSamps = if before <= 0 then isampsEmpty else arrEmpty rate (Arc (arcStart arc) (arcStart arc'))
+          let preSamps = arrEmptyDelta rate before
               bodySamps = runSamples rsamp arc'
-              postSamps = if after <= 0 then isampsEmpty else arrEmpty rate (Arc (arcEnd arc') (arcEnd arc))
+              postSamps = arrEmptyDelta rate after
               samps = [preSamps, bodySamps, postSamps]
           in  isampsConcat samps
-        Nothing -> arrEmpty rate arc
+        Nothing -> arrEmptyArc rate arc
 
 -- | Create a sample generator that shifts another generator in time.
 orShift :: Rate -> Delta -> Samples -> Samples
@@ -761,13 +771,12 @@ orConcat rate rs =
                 in  (d', t', a :|> (d, Arc t t', g))
       (_, tot, subArcs) = foldl' gather (0, 0, Empty) rs
       whole = Arc 0 tot
-  in  Samples $ \arc@(Arc s e) ->
+  in  Samples $ \arc ->
         let elemLen = arcLen @ElemCount (quantize rate arc)
-        in  case arcIntersect arc whole of
-              Nothing -> isampsConstant elemLen 0
-              Just filtArc@(Arc fs fe) ->
-                let preSamps = arrEmpty rate (Arc s fs)
-                    postSamps = arrEmpty rate (Arc fe e)
+        in  case arcOverlap arc whole of
+              OverlapOn before filtArc after ->
+                let preSamps = arrEmptyDelta rate before
+                    postSamps = arrEmptyDelta rate after
                     gen !samps = \case
                       Empty -> samps
                       (subDelta, subArc, subGen) :<| rest -> do
@@ -780,6 +789,7 @@ orConcat rate rs =
                           OverlapGt -> gen samps rest
                     genSamps = gen Empty subArcs
                 in  isampsConcat (toList (preSamps :<| (genSamps :|> postSamps)))
+              _ -> isampsConstant elemLen 0
 
 -- | Create a sample generator that merges multiple generators by mixing their samples.
 orMerge :: [Samples] -> Samples
