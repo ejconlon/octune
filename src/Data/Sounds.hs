@@ -57,7 +57,7 @@ import System.IO.Unsafe (unsafePerformIO)
 
 -- | A utility function for debugging that traces a list of strings.
 traceAll :: [[String]] -> a -> a
-traceAll xs = if True then id else trace ("\n<==\n" ++ unlines (fmap (("* " ++) . unwords) xs) ++ "==>\n")
+traceAll xs = if False then id else trace ("\n<==\n" ++ unlines (fmap (("* " ++) . unwords) xs) ++ "==>\n")
 
 -- Bowtie utils
 
@@ -356,7 +356,7 @@ newtype Rate = Rate {unRate :: Rational}
   deriving newtype (Num, Ord, Enum, Real, Fractional, RealFrac)
 
 instance Quantize Time Rate where
-  quantize (Rate r) (Arc (Time s) (Time e)) = Arc (truncate (s * r)) (ceiling (e * r))
+  quantize (Rate r) (Arc (Time s) (Time e)) = Arc (ceiling (s * r)) (ceiling (e * r))
   unquantize (Rate r) (Arc s e) = Arc (Time (fromIntegral s / r)) (Time (fromIntegral e / r))
 
 -- | A number of repetitions represented as a rational number.
@@ -422,11 +422,11 @@ arcRepeat n (Arc s e) = Arc s (addDelta s (mulReps n (measureDelta s e)))
 -- | Calculate how many times a delta fits into an arc.
 -- Returns a tuple of:
 --   * The amount of negative time before the first repetition (always non-negative)
---   * The index of the first repetition that overlaps the arc
---   * The index of the last repetition that overlaps the arc
+--   * The index of the first repetition that overlaps the arc (always non-negative)
+--   * The index of the last repetition that overlaps the arc (always non-negative)
 arcDeltaCover :: (Measure t d, Real t, RealFrac d) => d -> Arc t -> Maybe (d, Integer, Integer)
 arcDeltaCover d (Arc s e) =
-  if s >= e || d <= 0
+  if s >= e || d <= 0 || e <= 0
     then Nothing
     else
       let
@@ -725,16 +725,14 @@ orRepeat rate n rext rsamp =
                         repArc = Arc (addDelta (arcStart sarc) repDelta) (addDelta (arcEnd sarc) repDelta)
                       in
                         case arcIntersect arc repArc of
-                          Nothing -> isampsEmpty
+                          Nothing -> error "impossible"
                           Just subArc ->
                             let relArc = Arc (addDelta (arcStart subArc) (negate repDelta)) (addDelta (arcEnd subArc) (negate repDelta))
                             in  runSamples rsamp relArc
                     allSamps =
-                      [ arrEmptyDelta rate negDelta
-                      ]
-                        ++ map renderRep [firstN .. cappedN - 1]
-                        ++ [ arrEmptyDelta rate beyondMax
-                           ]
+                      [arrEmptyDelta rate negDelta] ++
+                      map renderRep [firstN .. cappedN - 1] ++
+                      [arrEmptyDelta rate beyondMax]
                   in
                     isampsConcat allSamps
 
@@ -744,6 +742,8 @@ orSlice rate sarc rsamp =
   if arcNull sarc
     then Samples (arrEmptyArc rate)
     else Samples $ \arc ->
+      -- NOTE: We must use arcRelative here because the current arc and the slice arc
+      -- are essentially in different frames of reference.
       case arcRelative arc sarc of
         Just (before, arc', after) ->
           let preSamps = arrEmptyDelta rate before
@@ -815,8 +815,15 @@ opRenderTopo :: (Ord n) => Rate -> Map n (Memo (OpF n) Extent) -> Either (SortEr
 opRenderTopo rate m = fmap (fmap runIdentity) (topoEval opAnnoRefs m (opRender rate))
 
 -- | Render an operation to samples, handling references with Left.
-opRenderSimple :: Rate -> Op n -> Either n InternalSamples
-opRenderSimple rate op = do
+opRenderSingleOn :: Rate -> Op n -> Arc Time -> Either n InternalSamples
+opRenderSingleOn rate op arc = do
+  op' <- opAnnoExtentSingle rate op
+  samps <- opRender rate Left op'
+  pure (runSamples samps arc)
+
+-- | Render an operation to samples, handling references with Left.
+opRenderSingle :: Rate -> Op n -> Either n InternalSamples
+opRenderSingle rate op = do
   op' <- opAnnoExtentSingle rate op
   samps <- opRender rate Left op'
   pure (maybe isampsEmpty (runSamples samps) (extentPosArc (memoKey op')))
