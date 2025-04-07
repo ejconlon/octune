@@ -904,43 +904,43 @@ runMutSamplesSimple rate samps arc = do
     runMutSamples samps arc bufVar
   unsafeFreezePrimArray arr
 
--- | Create empty mutable samples.
-ormEmpty :: MutSamples
-ormEmpty = MutSamples (\_ _ -> pure ())
+-- -- | Create empty mutable samples.
+-- ormEmpty :: MutSamples
+-- ormEmpty = MutSamples (\_ _ -> pure ())
 
--- | Create mutable samples from constant samples.
-ormSamp :: Rate -> InternalSamples -> MutSamples
-ormSamp rate x =
-  let src = avNew (unInternalSamples x)
-  in  if viewNull src
-        then ormEmpty
-        else MutSamples $ \arc bufVar -> void $ runMaybeT $ do
-          let arc' = quantize rate arc
-          src' <- maybe empty pure (viewNarrow arc' src)
-          lift (withMutex bufVar (`mavCopy` src'))
+-- -- | Create mutable samples from constant samples.
+-- ormSamp :: Rate -> InternalSamples -> MutSamples
+-- ormSamp rate x =
+--   let src = avNew (unInternalSamples x)
+--   in  if viewNull src
+--         then ormEmpty
+--         else MutSamples $ \arc bufVar -> void $ runMaybeT $ do
+--           let arc' = quantize rate arc
+--           src' <- maybe empty pure (viewNarrow arc' src)
+--           lift (withMutex bufVar (`mavCopy` src'))
 
--- | Render an operation to mutable samples.
-opRenderMut
-  :: forall e m n. (Monad m) => Rate -> (n -> ExceptT e m MutSamples) -> Memo (OpF n) Extent -> ExceptT e m MutSamples
-opRenderMut rate onRef = goTop
- where
-  goTop :: Memo (OpF n) Extent -> ExceptT e m MutSamples
-  goTop = memoRecallM go
-  go :: OpF n (Anno Extent MutSamples) -> ReaderT Extent (ExceptT e m) MutSamples
-  go = \case
-    OpEmpty -> pure ormEmpty
-    OpSamp x -> pure (ormSamp rate x)
-    OpRepeat _n _r -> error "TODO"
-    OpSlice (Arc _ss _se) (Anno _rext _rsamp) -> error "TODO"
-    OpShift _c _r -> error "TODO"
-    OpConcat _rs -> error "TODO"
-    OpMerge _rs -> error "TODO"
-    OpRef n -> lift (onRef n)
+-- -- | Render an operation to mutable samples.
+-- opRenderMut
+--   :: forall e m n. (Monad m) => Rate -> (n -> ExceptT e m MutSamples) -> Memo (OpF n) Extent -> ExceptT e m MutSamples
+-- opRenderMut rate onRef = goTop
+--  where
+--   goTop :: Memo (OpF n) Extent -> ExceptT e m MutSamples
+--   goTop = memoRecallM go
+--   go :: OpF n (Anno Extent MutSamples) -> ReaderT Extent (ExceptT e m) MutSamples
+--   go = \case
+--     OpEmpty -> pure ormEmpty
+--     OpSamp x -> pure (ormSamp rate x)
+--     OpRepeat _n _r -> error "TODO"
+--     OpSlice (Arc _ss _se) (Anno _rext _rsamp) -> error "TODO"
+--     OpShift _c _r -> error "TODO"
+--     OpConcat _rs -> error "TODO"
+--     OpMerge _rs -> error "TODO"
+--     OpRef n -> lift (onRef n)
 
--- | Render an operation to mutable samples, handling references with Left.
-opRenderMutSimple :: Rate -> Op n -> IO (Either n InternalSamples)
-opRenderMutSimple rate op = runExceptT $ do
-  op' <- either throwError pure (opAnnoExtentSingle rate op)
-  samps <- opRenderMut rate throwError op'
-  let marc = extentPosArc (memoKey op')
-  maybe (pure isampsEmpty) (fmap InternalSamples . liftIO . runMutSamplesSimple rate samps) marc
+-- -- | Render an operation to mutable samples, handling references with Left.
+-- opRenderMutSingle :: Rate -> Op n -> IO (Either n InternalSamples)
+-- opRenderMutSingle rate op = runExceptT $ do
+--   op' <- either throwError pure (opAnnoExtentSingle rate op)
+--   samps <- opRenderMut rate throwError op'
+--   let marc = extentPosArc (memoKey op')
+--   maybe (pure isampsEmpty) (fmap InternalSamples . liftIO . runMutSamplesSimple rate samps) marc
