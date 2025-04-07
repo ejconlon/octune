@@ -40,7 +40,7 @@ import Data.Sounds
   , opRenderSingleOn
   , opRenderTopo
   , quantizeArc
-  , unquantizeArc
+  , unquantizeArc, quantizeDelta, arcFrom
   )
 import Data.Topo (SortErr, topoSort)
 import Data.Traversable (for)
@@ -387,33 +387,35 @@ opTests lim =
         --             )
         --         )
         --     opRenderSingle (Rate 1) op === Right (isampsFromList [0])
-        -- , testProp "gen test" lim $ do
-        --     let rate = Rate 1
-        --     -- Generate a set of valid keys
-        --     keys <- forAll (Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z']))
-        --     -- let keys = ['a']
-        --     let validKeys = Set.fromList keys
-        --     -- Generate a map of ops with valid references
-        --     ops <- forAll (genValidOpMap validKeys)
-        --     -- Infer and annotate lengths
-        --     case opAnnoExtentTopo rate ops of
-        --       Left err -> liftIO (throwIO err)
-        --       Right ans -> do
-        --         case sequence ans of
-        --           Left n -> fail ("Missing key " ++ show n)
-        --           Right ans' -> do
-        --             case opRenderTopo rate ans' of
-        --               Left err -> liftIO (throwIO err)
-        --               Right res -> do
-        --                 for_ (Map.toList res) $ \(k, samps) -> do
-        --                   let an = ans' Map.! k
-        --                       ex = memoKey an
-        --                   case extentPosArc ex of
-        --                     Nothing -> pure ()
-        --                     Just arc -> do
-        --                       let len = arcEnd @ElemCount (quantize rate arc)
-        --                           arr = runSamples samps arc
-        --                       isampsLength arr === len
+        , testProp "gen test" lim $ do
+            let rate = Rate 1
+            -- Generate a set of valid keys
+            keys <- forAll (Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z']))
+            -- let keys = ['a']
+            let validKeys = Set.fromList keys
+            -- Generate a map of ops with valid references
+            ops <- forAll (genValidOpMap validKeys)
+            -- Infer and annotate lengths
+            case opAnnoExtentTopo rate ops of
+              Left err -> liftIO (throwIO err)
+              Right ans -> do
+                case sequence ans of
+                  Left n -> fail ("Missing key " ++ show n)
+                  Right ans' -> do
+                    case opRenderTopo rate ans' of
+                      Left err -> liftIO (throwIO err)
+                      Right res -> do
+                        for_ (Map.toList res) $ \(k, samps) -> do
+                          let an = ans' Map.! k
+                              ex = memoKey an
+                          case extentPosArc ex of
+                            Nothing -> pure ()
+                            Just arc -> do
+                              let len = quantizeDelta rate (arcLen arc)
+                                  arr = runSamples samps (arcFrom 0 len)
+                              -- TODO fix
+                              -- fromIntegral (isampsLength arr) === len
+                              pure ()
     ]
 
 main :: IO ()
