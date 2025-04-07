@@ -414,7 +414,7 @@ opTests lim =
                               let len = quantizeDelta rate (arcLen arc)
                                   arr = runSamples samps (arcFrom 0 len)
                               -- TODO fix
-                              -- fromIntegral (isampsLength arr) === len
+                              fromIntegral (isampsLength arr) === len
                               pure ()
     ]
 
