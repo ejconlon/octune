@@ -17,6 +17,7 @@ import Data.Foldable (fold, foldl', for_, toList)
 import Data.Functor.Foldable (Recursive (..), cata)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
+import Data.Maybe (catMaybes)
 import Data.PrimPar (Mutex, PrimPar, newMutex, runPrimPar)
 import Data.Primitive.ByteArray (ByteArray (..))
 import Data.Primitive.PrimArray
@@ -728,54 +729,62 @@ orRepeat rate n rext rsamp =
       Just sarc ->
         let repLenQ = quantizeDelta rate (arcLen sarc) -- Quantized repetition length
             repLenU = unquantizeDelta rate repLenQ -- Unquantized repetition length (Delta)
-        in  Samples $ \arc@(Arc arcStartQ _) ->
+        in  Samples $ \arc@(Arc _ _) ->
               -- Requested arc (QTime)
               let arc' = unquantizeArc rate arc -- Requested arc (Time)
                   targetLenQ = arcLen arc -- Target final length (QDelta)
               in  if targetLenQ <= 0
                     then arrEmptyArc rate arc
                     else InternalSamples $ runPrimArray $ do
-                      -- Create the final mutable array, initialized to 0
-                      darr <- newPrimArray (fromIntegral targetLenQ)
-                      setPrimArray darr 0 (fromIntegral targetLenQ) 0
+                      -- Allocate final array, initialized to 0
+                      finalMArr <- zeroPrimArray (fromIntegral targetLenQ)
+                      writeOffsetRef <- newSTRef (0 :: QDelta) -- Store QDelta
 
                       -- Only proceed if repetitions have non-zero length
                       when (repLenU > 0) $ do
-                        case arcDeltaCoverMax repLenU n arc' of -- Use Delta version for cover
+                        case arcDeltaCoverMax repLenU n arc' of
                           Nothing -> pure () -- No overlap, array remains 0
-                          Just (_, firstN, cappedN, _) -> do
-                            -- Ignore padding deltas now
-                            -- Iterate through each sample index in the target array
-                            for_ [0 .. fromIntegral targetLenQ - 1] $ \i -> do
-                              -- Calculate the Time corresponding to this index
-                              let qTimeAtIndex = arcStartQ + fromIntegral i
-                                  timeAtIndex = arcStart (unquantizeArc rate (Arc qTimeAtIndex (qTimeAtIndex + 1)))
+                          Just (paddingBeforeT, firstN, cappedN, _) -> do
+                            let prePaddingQ = quantizeDelta rate paddingBeforeT
 
-                              -- Determine which repetition this Time falls into (using Rationals)
-                              let rep = floor (unTime timeAtIndex / unDelta repLenU)
+                            -- Write pre-padding
+                            writeOffset <- readSTRef writeOffsetRef
+                            let prePaddingToCopy = min prePaddingQ (max 0 (targetLenQ - writeOffset))
+                            -- The array is already zero-filled, so we just advance the offset
+                            writeSTRef writeOffsetRef (writeOffset + prePaddingToCopy)
 
-                              -- Check if this repetition is relevant
-                              when (rep >= firstN && rep < cappedN) $ do
-                                -- Calculate Time relative to the start of this repetition
+                            -- Write repetition segments
+                            for_ [firstN .. cappedN - 1] $ \rep -> do
+                              currentOffset <- readSTRef writeOffsetRef
+                              when (currentOffset < targetLenQ) $ do
                                 let repStartDeltaU = fromIntegral rep * repLenU
-                                    repStartTime = addDelta (Time 0) repStartDeltaU
-                                    relativeDelta = measureDelta repStartTime timeAtIndex
-                                    relativeTime = addDelta (Time 0) relativeDelta -- Time relative to 0
+                                    repStartT = addDelta (Time 0) repStartDeltaU
+                                    repArcT = arcFrom repStartT repLenU
 
-                                -- Quantize relative Time to get index into source sample
-                                let qRelativeArc = quantizeArc rate (Arc relativeTime (addDelta relativeTime 0.000001)) -- Small arc for point quantization
-                                    qRelativeIdx = arcStart qRelativeArc
+                                case arcIntersect arc' repArcT of
+                                  Nothing -> pure ()
+                                  Just subArcT -> do
+                                    let relArcT = arcShift subArcT (negate repStartDeltaU)
+                                        relArcQ = quantizeArc rate relArcT
+                                    unless (arcNull relArcQ) $ do
+                                      let renderedRepSamps = runSamples rsamp relArcQ
+                                          -- Convert ElemCount to QDelta
+                                          renderedLenQ = fromIntegral (isampsLength renderedRepSamps) :: QDelta
+                                          -- Calculate remaining space as QDelta
+                                          remainingLenQ = max 0 (targetLenQ - currentOffset)
+                                          -- Determine length to copy as QDelta
+                                          lenToCopyQ = min renderedLenQ remainingLenQ
 
-                                -- Get the sample value from the source generator for the relative index
-                                -- Need to render a tiny arc to get the single sample point
-                                let singleSampleSourceArc = Arc qRelativeIdx (qRelativeIdx + 1)
-                                    singleSampleArr = runSamples rsamp singleSampleSourceArc
+                                      when (lenToCopyQ > 0) $ do
+                                        -- Convert QDelta offsets/lengths to Int for PrimArray ops
+                                        let currentOffsetInt = fromIntegral currentOffset :: Int
+                                            lenToCopyInt = fromIntegral lenToCopyQ :: Int
+                                        copyPrimArray finalMArr currentOffsetInt (unInternalSamples renderedRepSamps) 0 lenToCopyInt
+                                        -- Update offset (QDelta + QDelta)
+                                        writeSTRef writeOffsetRef (currentOffset + lenToCopyQ)
+                      -- Post-padding is implicitly handled by zeroing and bounds checks
 
-                                -- Write the sample if it's valid
-                                when (isampsLength singleSampleArr > 0) $ do
-                                  let sampleVal = isampsIndex singleSampleArr 0
-                                  writePrimArray darr i sampleVal
-                      pure darr
+                      pure finalMArr
 
 -- | Create a sample generator that slices another generator.
 orSlice :: Rate -> Arc Time -> Samples -> Samples
