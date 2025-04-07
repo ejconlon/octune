@@ -3,12 +3,16 @@
 module Data.Sounds where
 
 import Bowtie (Anno (..), Fix (..), Memo, cataM, memoFix, memoKey, mkMemoM, pattern MemoP)
+import Control.Applicative (Alternative (..))
 import Control.DeepSeq (NFData)
-import Control.Monad (unless, when, (>=>))
+import Control.Monad (unless, void, when, (>=>))
+import Control.Monad.Except (ExceptT, MonadError (..), runExceptT)
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Identity (Identity (..), runIdentity)
 import Control.Monad.Primitive (PrimMonad (..), PrimState, RealWorld)
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.Trans (lift)
+import Control.Monad.Trans.Maybe (MaybeT (..))
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
 import Dahdit.LiftedPrimArray (LiftedPrimArray (..))
@@ -18,7 +22,7 @@ import Data.Foldable (fold, foldl', for_, toList)
 import Data.Functor.Foldable (Recursive (..), cata)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
-import Data.PrimPar (Mutex, PrimPar, newMutex, runPrimPar)
+import Data.PrimPar (Mutex, PrimPar, newMutex, runPrimPar, withMutex)
 import Data.Primitive.ByteArray (ByteArray (..))
 import Data.Primitive.PrimArray
   ( MutablePrimArray
@@ -999,43 +1003,43 @@ runMutSamplesSimple rate samps arc = do
     runMutSamples samps arc bufVar
   unsafeFreezePrimArray arr
 
--- -- | Create empty mutable samples.
--- ormEmpty :: MutSamples
--- ormEmpty = MutSamples (\_ _ -> pure ())
+-- | Create empty mutable samples.
+ormEmpty :: MutSamples
+ormEmpty = MutSamples (\_ _ -> pure ())
 
--- -- | Create mutable samples from constant samples.
--- ormSamp :: Rate -> InternalSamples -> MutSamples
--- ormSamp rate x =
---   let src = avNew (unInternalSamples x)
---   in  if viewNull src
---         then ormEmpty
---         else MutSamples $ \arc bufVar -> void $ runMaybeT $ do
---           let arc' = quantize rate arc
---           src' <- maybe empty pure (viewNarrow arc' src)
---           lift (withMutex bufVar (`mavCopy` src'))
+-- | Create mutable samples from constant samples.
+ormSamp :: Rate -> InternalSamples -> MutSamples
+ormSamp rate x =
+  let src = avNew (unInternalSamples x)
+  in  if viewNull src
+        then ormEmpty
+        else MutSamples $ \arc bufVar -> void $ runMaybeT $ do
+          let arc' = quantizeArc rate arc
+          src' <- maybe empty pure (viewNarrow arc' src)
+          lift (withMutex bufVar (`mavCopy` src'))
 
--- -- | Render an operation to mutable samples.
--- opRenderMut
---   :: forall e m n. (Monad m) => Rate -> (n -> ExceptT e m MutSamples) -> Memo (OpF n) Extent -> ExceptT e m MutSamples
--- opRenderMut rate onRef = goTop
---  where
---   goTop :: Memo (OpF n) Extent -> ExceptT e m MutSamples
---   goTop = memoRecallM go
---   go :: OpF n (Anno Extent MutSamples) -> ReaderT Extent (ExceptT e m) MutSamples
---   go = \case
---     OpEmpty -> pure ormEmpty
---     OpSamp x -> pure (ormSamp rate x)
---     OpRepeat _n _r -> error "TODO"
---     OpSlice (Arc _ss _se) (Anno _rext _rsamp) -> error "TODO"
---     OpShift _c _r -> error "TODO"
---     OpConcat _rs -> error "TODO"
---     OpMerge _rs -> error "TODO"
---     OpRef n -> lift (onRef n)
+-- | Render an operation to mutable samples.
+opRenderMut
+  :: forall e m n. (Monad m) => Rate -> (n -> ExceptT e m MutSamples) -> Memo (OpF n) Extent -> ExceptT e m MutSamples
+opRenderMut rate onRef = goTop
+ where
+  goTop :: Memo (OpF n) Extent -> ExceptT e m MutSamples
+  goTop = memoRecallM go
+  go :: OpF n (Anno Extent MutSamples) -> ReaderT Extent (ExceptT e m) MutSamples
+  go = \case
+    OpEmpty -> pure ormEmpty
+    OpSamp x -> pure (ormSamp rate x)
+    OpRepeat _n _r -> error "TODO"
+    OpSlice (Arc _ss _se) (Anno _rext _rsamp) -> error "TODO"
+    OpShift _c _r -> error "TODO"
+    OpConcat _rs -> error "TODO"
+    OpMerge _rs -> error "TODO"
+    OpRef n -> lift (onRef n)
 
--- -- | Render an operation to mutable samples, handling references with Left.
--- opRenderMutSingle :: Rate -> Op n -> IO (Either n InternalSamples)
--- opRenderMutSingle rate op = runExceptT $ do
---   op' <- either throwError pure (opAnnoExtentSingle rate op)
---   samps <- opRenderMut rate throwError op'
---   let marc = extentPosArc (memoKey op')
---   maybe (pure isampsEmpty) (fmap InternalSamples . liftIO . runMutSamplesSimple rate samps) marc
+-- | Render an operation to mutable samples, handling references with Left.
+opRenderMutSingle :: Rate -> Op n -> IO (Either n InternalSamples)
+opRenderMutSingle rate op = runExceptT $ do
+  op' <- either throwError pure (opAnnoExtentSingle rate op)
+  samps <- opRenderMut rate throwError op'
+  let marc = extentPosArc (memoKey op')
+  maybe (pure isampsEmpty) (fmap InternalSamples . liftIO . runMutSamplesSimple rate samps) marc

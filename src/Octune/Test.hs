@@ -34,6 +34,7 @@ import Data.Sounds
   , isampsLength
   , opAnnoExtentSingle
   , opAnnoExtentTopo
+  , opRenderMutSingle
   , opRenderSingle
   , opRenderTopo
   , quantizeArc
@@ -258,14 +259,14 @@ opTests lim =
         let op = Fix (OpEmpty :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 0 0)) OpEmpty)
         opRenderSingle (Rate 1) op === Right isampsEmpty
-    , -- liftIO (opRenderMutSingle (Rate 1) op) >>= (=== Right isampsEmpty)
-      testUnit "OpSamp" $ do
+        liftIO (opRenderMutSingle (Rate 1) op) >>= (=== Right isampsEmpty)
+    , testUnit "OpSamp" $ do
         let inSamps = isampsFromList [1, 2, 3]
             op = Fix (OpSamp inSamps :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))
         opRenderSingle (Rate 1) op === Right inSamps
-    , -- liftIO (opRenderMutSingle (Rate 1) op) >>= (=== Right inSamps)
-      testUnit "OpShift" $ do
+        liftIO (opRenderMutSingle (Rate 1) op) >>= (=== Right inSamps)
+    , testUnit "OpShift" $ do
         let inSamps = isampsFromList [1, 2, 3]
             inner = Fix (OpSamp inSamps :: TestOpF)
             op = Fix (OpShift (Delta 2) inner :: TestOpF)
