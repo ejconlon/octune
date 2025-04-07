@@ -726,18 +726,56 @@ orRepeat rate n rext rsamp =
     else case extentPosArc rext of
       Nothing -> Samples (arrEmptyArc rate)
       Just sarc ->
-        let repLenQ = quantizeDelta rate (arcLen sarc) -- Quantized length
-            repLenU = unquantizeDelta rate repLenQ -- Unquantized length as Delta
-        in Samples $ \arc -> -- Requested arc (QTime)
-             let arc' = unquantizeArc rate arc -- Requested arc (Time)
-             in case arcDeltaCoverMax repLenU n arc' of -- Use Delta version for cover
-                  Nothing -> arrEmptyArc rate arc
-                  Just (paddingBefore, firstN, cappedN, paddingAfter) ->
-                    -- from firstN to cappedN, repeat the sample generator on shifted arcs
-                    -- Then use paddingBefore and paddingAfter to pad the beginning and end
-                    -- Note that due to quantization, we may have to remove some samples
-                    -- (preferably from the padding). We _must_ return a sample array of length repLenQ.
-                    error "TODO"
+        let repLenQ = quantizeDelta rate (arcLen sarc) -- Quantized repetition length
+            repLenU = unquantizeDelta rate repLenQ -- Unquantized repetition length (Delta)
+        in  Samples $ \arc@(Arc arcStartQ _) ->
+              -- Requested arc (QTime)
+              let arc' = unquantizeArc rate arc -- Requested arc (Time)
+                  targetLenQ = arcLen arc -- Target final length (QDelta)
+              in  if targetLenQ <= 0
+                    then arrEmptyArc rate arc
+                    else InternalSamples $ runPrimArray $ do
+                      -- Create the final mutable array, initialized to 0
+                      darr <- newPrimArray (fromIntegral targetLenQ)
+                      setPrimArray darr 0 (fromIntegral targetLenQ) 0
+
+                      -- Only proceed if repetitions have non-zero length
+                      when (repLenU > 0) $ do
+                        case arcDeltaCoverMax repLenU n arc' of -- Use Delta version for cover
+                          Nothing -> pure () -- No overlap, array remains 0
+                          Just (_, firstN, cappedN, _) -> do
+                            -- Ignore padding deltas now
+                            -- Iterate through each sample index in the target array
+                            for_ [0 .. fromIntegral targetLenQ - 1] $ \i -> do
+                              -- Calculate the Time corresponding to this index
+                              let qTimeAtIndex = arcStartQ + fromIntegral i
+                                  timeAtIndex = arcStart (unquantizeArc rate (Arc qTimeAtIndex (qTimeAtIndex + 1)))
+
+                              -- Determine which repetition this Time falls into (using Rationals)
+                              let rep = floor (unTime timeAtIndex / unDelta repLenU)
+
+                              -- Check if this repetition is relevant
+                              when (rep >= firstN && rep < cappedN) $ do
+                                -- Calculate Time relative to the start of this repetition
+                                let repStartDeltaU = fromIntegral rep * repLenU
+                                    repStartTime = addDelta (Time 0) repStartDeltaU
+                                    relativeDelta = measureDelta repStartTime timeAtIndex
+                                    relativeTime = addDelta (Time 0) relativeDelta -- Time relative to 0
+
+                                -- Quantize relative Time to get index into source sample
+                                let qRelativeArc = quantizeArc rate (Arc relativeTime (addDelta relativeTime 0.000001)) -- Small arc for point quantization
+                                    qRelativeIdx = arcStart qRelativeArc
+
+                                -- Get the sample value from the source generator for the relative index
+                                -- Need to render a tiny arc to get the single sample point
+                                let singleSampleSourceArc = Arc qRelativeIdx (qRelativeIdx + 1)
+                                    singleSampleArr = runSamples rsamp singleSampleSourceArc
+
+                                -- Write the sample if it's valid
+                                when (isampsLength singleSampleArr > 0) $ do
+                                  let sampleVal = isampsIndex singleSampleArr 0
+                                  writePrimArray darr i sampleVal
+                      pure darr
 
 -- | Create a sample generator that slices another generator.
 orSlice :: Rate -> Arc Time -> Samples -> Samples

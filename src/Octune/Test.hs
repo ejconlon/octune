@@ -26,6 +26,7 @@ import Data.Sounds
   , Time (..)
   , arcDeltaCover
   , arcDeltaCoverMax
+  , arcFrom
   , arcLen
   , arcOverlap
   , arcRelative
@@ -40,7 +41,8 @@ import Data.Sounds
   , opRenderSingleOn
   , opRenderTopo
   , quantizeArc
-  , unquantizeArc, quantizeDelta, arcFrom
+  , quantizeDelta
+  , unquantizeArc
   )
 import Data.Topo (SortErr, topoSort)
 import Data.Traversable (for)
