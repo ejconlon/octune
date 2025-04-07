@@ -332,90 +332,34 @@ opTests lim =
     , testUnit "OpRef" $ do
         let op = Fix (OpRef 'a' :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Left 'a'
-        -- , testUnit "regression 1" $ do
-        --     let op = Fix (OpShift (-2) (Fix (OpRepeat 1 (Fix (OpSamp (isampsFromList [0]))))) :: TestOpF)
-        --     opAnnoExtentSingle (Rate 1) op
-        --       === Right
-        --         ( MemoP
-        --             (Extent (Arc 2 3))
-        --             (OpShift (-2) (MemoP (Extent (Arc 0 1)) (OpRepeat 1 (MemoP (Extent (Arc 0 1)) (OpSamp (isampsFromList [0]))))))
-        --         )
-        --     opRenderSingle (Rate 1) op === Right (isampsFromList [0, 0, 0])
-        -- , testUnit "regression 2" $ do
-        --     let op = Fix (OpShift (-1) (Fix (OpRepeat 1 (Fix (OpSamp (isampsFromList [1, 2]))))) :: TestOpF)
-        --     opAnnoExtentSingle (Rate 1) op
-        --       === Right
-        --         ( MemoP
-        --             (Extent (Arc 1 3))
-        --             (OpShift (-1) (MemoP (Extent (Arc 0 2)) (OpRepeat 1 (MemoP (Extent (Arc 0 2)) (OpSamp (isampsFromList [1, 2]))))))
-        --         )
-        --     opRenderSingle (Rate 1) op === Right (isampsFromList [0, 1, 2])
-        -- , testUnit "regression 3" $ do
-        --     let opInner1 = Fix (OpSlice (Arc (Time 0) (Time 1)) (Fix OpEmpty) :: TestOpF)
-        --     let opInner2 = Fix (OpRepeat 1 opInner1)
-        --     let op = Fix (OpSlice (Arc (Time (-3)) (Time (-1))) opInner2)
-        --     opAnnoExtentSingle (Rate 1) op
-        --       === Right
-        --         ( MemoP
-        --             (Extent (Arc 0 2))
-        --             ( OpSlice
-        --                 (Arc (Time (-3)) (Time (-1)))
-        --                 ( MemoP
-        --                     (Extent (Arc 0 1))
-        --                     (OpRepeat 1 (MemoP (Extent (Arc 0 1)) (OpSlice (Arc (Time 0) (Time 1)) (MemoP (Extent (Arc 0 0)) OpEmpty))))
-        --                 )
-        --             )
-        --         )
-        --     arcRelative @Time (Arc 0 2) (Arc (-3) (-1)) === Just (0, Arc (-3) (-1), 0)
-        --     opRenderSingleOn (Rate 1) opInner1 (Arc (-3) (-1)) === Right (isampsFromList [0, 0])
-        --     opRenderSingleOn (Rate 1) opInner2 (Arc (-3) (-1)) === Right (isampsFromList [0, 0])
-        --     opRenderSingle (Rate 1) op === Right (isampsFromList [0, 0])
-        -- , testUnit "regression 4" $ do
-        --     let opInner = Fix (OpSamp (isampsFromList [0, 0]) :: TestOpF)
-        --     let opRepeat = Fix (OpRepeat 1 opInner)
-        --     let op = Fix (OpSlice (Arc (Time 0) (Time 1)) opRepeat)
-        --     opAnnoExtentSingle (Rate 1) op
-        --       === Right
-        --         ( MemoP
-        --             (Extent (Arc 0 1))
-        --             ( OpSlice
-        --                 (Arc (Time 0) (Time 1))
-        --                 ( MemoP
-        --                     (Extent (Arc 0 2))
-        --                     (OpRepeat 1 (MemoP (Extent (Arc 0 2)) (OpSamp (isampsFromList [0, 0]))))
-        --                 )
-        --             )
-        --         )
-        --     opRenderSingle (Rate 1) op === Right (isampsFromList [0])
-        , testProp "gen test" lim $ do
-            let rate = Rate 1
-            -- Generate a set of valid keys
-            keys <- forAll (Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z']))
-            -- let keys = ['a']
-            let validKeys = Set.fromList keys
-            -- Generate a map of ops with valid references
-            ops <- forAll (genValidOpMap validKeys)
-            -- Infer and annotate lengths
-            case opAnnoExtentTopo rate ops of
-              Left err -> liftIO (throwIO err)
-              Right ans -> do
-                case sequence ans of
-                  Left n -> fail ("Missing key " ++ show n)
-                  Right ans' -> do
-                    case opRenderTopo rate ans' of
-                      Left err -> liftIO (throwIO err)
-                      Right res -> do
-                        for_ (Map.toList res) $ \(k, samps) -> do
-                          let an = ans' Map.! k
-                              ex = memoKey an
-                          case extentPosArc ex of
-                            Nothing -> pure ()
-                            Just arc -> do
-                              let len = quantizeDelta rate (arcLen arc)
-                                  arr = runSamples samps (arcFrom 0 len)
-                              -- TODO fix
-                              fromIntegral (isampsLength arr) === len
-                              pure ()
+    , testProp "gen test" lim $ do
+        let rate = Rate 1
+        -- Generate a set of valid keys
+        keys <- forAll (Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z']))
+        -- let keys = ['a']
+        let validKeys = Set.fromList keys
+        -- Generate a map of ops with valid references
+        ops <- forAll (genValidOpMap validKeys)
+        -- Infer and annotate lengths
+        case opAnnoExtentTopo rate ops of
+          Left err -> liftIO (throwIO err)
+          Right ans -> do
+            case sequence ans of
+              Left n -> fail ("Missing key " ++ show n)
+              Right ans' -> do
+                case opRenderTopo rate ans' of
+                  Left err -> liftIO (throwIO err)
+                  Right res -> do
+                    for_ (Map.toList res) $ \(k, samps) -> do
+                      let an = ans' Map.! k
+                          ex = memoKey an
+                      case extentPosArc ex of
+                        Nothing -> pure ()
+                        Just arc -> do
+                          let qArc = quantizeArc rate arc
+                              qLen = arcLen qArc
+                              arr = runSamples samps qArc
+                          fromIntegral (isampsLength arr) === qLen
     ]
 
 main :: IO ()

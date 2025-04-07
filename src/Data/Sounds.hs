@@ -592,6 +592,7 @@ extentNull :: Extent -> Bool
 extentNull = arcNull . unExtent
 
 -- | Get the positive portion of an extent as an arc.
+-- If non-empty in positive time, returns an arc starting at 0.
 extentPosArc :: Extent -> Maybe (Arc Time)
 extentPosArc (Extent (Arc s e)) =
   if e <= 0 || s >= e
@@ -725,25 +726,18 @@ orRepeat rate n rext rsamp =
     else case extentPosArc rext of
       Nothing -> Samples (arrEmptyArc rate)
       Just sarc ->
-        let repLen = quantizeDelta rate (arcLen sarc)
-        in  Samples $ \arc ->
-              let sarc' = unquantizeArc rate arc
-              in  case arcDeltaCoverMax (unquantizeDelta rate repLen) n sarc' of
-                    Nothing -> arrEmptyArc rate arc
-                    Just (_, firstN, cappedN, _) ->
-                      let
-                        renderRep rep =
-                          let
-                            repDelta = QDelta (rep * unQDelta repLen)
-                            repArc = Arc (addDelta (arcStart arc) repDelta) (addDelta (arcStart arc) (repDelta + repLen))
-                          in
-                            case arcIntersect arc repArc of
-                              Nothing -> arrEmptyArc rate arc
-                              Just subArc ->
-                                let relArc = Arc (addDelta (arcStart subArc) (negate repDelta)) (addDelta (arcEnd subArc) (negate repDelta))
-                                in  runSamples rsamp relArc
-                      in
-                        isampsConcat (map renderRep [firstN .. cappedN - 1])
+        let repLenQ = quantizeDelta rate (arcLen sarc) -- Quantized length
+            repLenU = unquantizeDelta rate repLenQ -- Unquantized length as Delta
+        in Samples $ \arc -> -- Requested arc (QTime)
+             let arc' = unquantizeArc rate arc -- Requested arc (Time)
+             in case arcDeltaCoverMax repLenU n arc' of -- Use Delta version for cover
+                  Nothing -> arrEmptyArc rate arc
+                  Just (paddingBefore, firstN, cappedN, paddingAfter) ->
+                    -- from firstN to cappedN, repeat the sample generator on shifted arcs
+                    -- Then use paddingBefore and paddingAfter to pad the beginning and end
+                    -- Note that due to quantization, we may have to remove some samples
+                    -- (preferably from the padding). We _must_ return a sample array of length repLenQ.
+                    error "TODO"
 
 -- | Create a sample generator that slices another generator.
 orSlice :: Rate -> Arc Time -> Samples -> Samples
