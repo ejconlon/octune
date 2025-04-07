@@ -8,12 +8,12 @@ import Control.Monad (unless, when, (>=>))
 import Control.Monad.Identity (Identity (..), runIdentity)
 import Control.Monad.Primitive (PrimMonad (..), PrimState, RealWorld)
 import Control.Monad.Reader (ReaderT (..))
-import Control.Monad.ST (ST)
 import Control.Monad.Trans (lift)
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
 import Dahdit.LiftedPrimArray (LiftedPrimArray (..))
 import Dahdit.Sizes (ByteCount (..), ElemCount (..))
+import Data.Bifunctor (second)
 import Data.Foldable (fold, foldl', for_, toList)
 import Data.Functor.Foldable (Recursive (..), cata)
 import Data.Int (Int32)
@@ -41,7 +41,7 @@ import Data.Primitive.PrimArray
   , writePrimArray
   )
 import Data.Primitive.Types (Prim)
-import Data.STRef.Strict (STRef, newSTRef, readSTRef, writeSTRef)
+import Data.STRef.Strict (newSTRef, readSTRef, writeSTRef)
 import Data.Semigroup (Max (..), Sum (..))
 import Data.Sequence (Seq (..))
 import Data.Set (Set)
@@ -103,6 +103,31 @@ concatPrimArray = \case
       copyPrimArray darr off sarr 0 len
       writeSTRef offRef (off + len)
     pure darr
+
+-- | Concatenate multiple primitive arrays, each repeated a specified number of times.
+concatRepsPrimArray :: (Prim a) => [(Int, PrimArray a)] -> PrimArray a
+concatRepsPrimArray reps = runPrimArray $ do
+  -- Calculate the total length required
+  let calculateChunkLength (n, sarr) = n * sizeofPrimArray sarr
+      totalLength = getSum (foldMap (Sum . calculateChunkLength) reps)
+
+  -- Create the destination array
+  destArr <- newPrimArray totalLength
+  currentOffsetRef <- newSTRef 0
+
+  -- Copy each repeated array into the destination array
+  for_ reps $ \(n, sarr) -> do
+    let srcSize = sizeofPrimArray sarr
+    when (n > 0 && srcSize > 0) $ do
+      currentOffset <- readSTRef currentOffsetRef
+      -- Copy the source array 'n' times
+      for_ [0 .. n - 1] $ \i -> do
+        let destPos = currentOffset + i * srcSize
+        copyPrimArray destArr destPos sarr 0 srcSize
+      -- Update the offset for the next segment
+      writeSTRef currentOffsetRef (currentOffset + n * srcSize)
+
+  pure destArr
 
 -- | Merge one primitive array into another using a combining function.
 mergeIntoPrimArray
@@ -190,6 +215,10 @@ isampsReplicate n = InternalSamples . replicateWholePrimArray n . unInternalSamp
 -- | Create an samples array from a list.
 isampsFromList :: [Int32] -> InternalSamples
 isampsFromList = InternalSamples . primArrayFromList
+
+-- | Concatenate multiple samples arrays, each repeated a specified number of times.
+isampsConcatReps :: [(Int, InternalSamples)] -> InternalSamples
+isampsConcatReps = InternalSamples . concatRepsPrimArray . fmap (second unInternalSamples)
 
 -- | Concatenate multiple samples arrays.
 isampsConcat :: [InternalSamples] -> InternalSamples
@@ -731,23 +760,18 @@ orRepeat rate n rext rsamp =
             repLenU = unquantizeDelta rate repLenQ
         in  Samples $ \arc@(Arc _ _) ->
               let arc' = unquantizeArc rate arc
-                  targetLenQ = arcLen arc
+                  targetLenQ :: QDelta = arcLen arc -- Explicit type annotation
               in  if targetLenQ <= 0 || repLenU <= 0
                     then arrEmptyArc rate arc
-                    else InternalSamples $ runPrimArray $ do
-                      finalMArr <- zeroPrimArray (fromIntegral targetLenQ)
-                      writeOffsetRef <- newSTRef (0 :: QDelta)
-
-                      case arcDeltaCoverMax repLenU n arc' of
-                        Nothing -> pure finalMArr -- No overlap
-                        Just (paddingBeforeU, firstN, cappedN, _) -> do
-                          -- Ignore paddingAfterT
-                          when (firstN < cappedN) $ do
+                    else case arcDeltaCoverMax repLenU n arc' of
+                      Nothing -> arrEmptyArc rate arc -- No overlap
+                      Just (paddingBeforeU, firstN, cappedN, _) ->
+                        -- Ignore paddingAfterT
+                        if firstN >= cappedN
+                          then arrEmptyArc rate arc -- No repetitions overlap
+                          else do
                             -- Check if there are any repetitions to process
                             let prePaddingQ = quantizeDelta rate paddingBeforeU
-
-                            -- Advance offset for pre-padding
-                            writeSTRef writeOffsetRef (min targetLenQ prePaddingQ)
 
                             -- Analyze first and last repetitions
                             let firstRepIdx = firstN
@@ -790,39 +814,29 @@ orRepeat rate n rext rsamp =
                                 mFullSamps = if numFullReps > 0 then renderSegment rate rsamp (arcFrom (Time 0) repLenU) else Nothing -- Use arcFrom
                                 mSuffixSamps = if firstRepIdx /= lastRepIdx && isLastPartial then renderSegment rate rsamp =<< mLastRelArcU else Nothing
 
-                            -- Assemble by copying segments
-                            copySegment finalMArr writeOffsetRef targetLenQ mPrefixSamps
-                            for_ [0 .. numFullReps - 1] $ \_ ->
-                              copySegment finalMArr writeOffsetRef targetLenQ mFullSamps
-                            copySegment finalMArr writeOffsetRef targetLenQ mSuffixSamps
+                            -- Assemble using isampsConcatReps
+                            let paddingSeg = [(1 :: Int, arrEmptyDelta rate prePaddingQ) | prePaddingQ > 0]
+                                prefixSeg = [(1 :: Int, samps) | Just samps <- [mPrefixSamps]]
+                                fullSeg =
+                                  [ (fromIntegral numFullReps, samps)
+                                  | numFullReps > 0
+                                  , Just samps <- [mFullSamps]
+                                  ]
+                                suffixSeg = [(1 :: Int, samps) | Just samps <- [mSuffixSamps]]
+                                segmentsToConcat = paddingSeg ++ prefixSeg ++ fullSeg ++ suffixSeg
 
-                          pure finalMArr
+                            -- Calculate total length and add padding if needed
+                            let currentLen :: QDelta = fromIntegral $ getSum $ foldMap (Sum . (\(c, s) -> c * unElemCount (isampsLength s))) segmentsToConcat -- Calculate as Int/ElemCount sum, then convert
+                                paddingNeeded = targetLenQ - currentLen
+                                endPaddingSeg = [(1 :: Int, arrEmptyDelta rate paddingNeeded) | paddingNeeded > 0]
+
+                            isampsConcatReps (segmentsToConcat ++ endPaddingSeg)
 
 -- Helper to calculate and render a segment
 renderSegment :: Rate -> Samples -> Arc Time -> Maybe InternalSamples
 renderSegment rate sampler relArcU =
   let relArcQ = quantizeArc rate relArcU
   in  if arcNull relArcQ then Nothing else Just (runSamples sampler relArcQ)
-
--- Helper to copy rendered samples into the target array
-copySegment
-  :: MutablePrimArray s Int32 -- Target array
-  -> STRef s QDelta -- Current write offset
-  -> QDelta -- Total target length
-  -> Maybe InternalSamples -- Samples to copy (if any)
-  -> ST s ()
-copySegment _ _ _ Nothing = pure ()
-copySegment finalMArr writeOffsetRef targetLenQ (Just segSamps) = do
-  currentOffset <- readSTRef writeOffsetRef
-  when (currentOffset < targetLenQ) $ do
-    let segLenQ = fromIntegral (isampsLength segSamps) :: QDelta
-        remainingLenQ = max 0 (targetLenQ - currentOffset)
-        lenToCopyQ = min segLenQ remainingLenQ
-    when (lenToCopyQ > 0) $ do
-      let currentOffsetInt = fromIntegral currentOffset :: Int
-          lenToCopyInt = fromIntegral lenToCopyQ :: Int
-      copyPrimArray finalMArr currentOffsetInt (unInternalSamples segSamps) 0 lenToCopyInt
-      writeSTRef writeOffsetRef (currentOffset + lenToCopyQ)
 
 -- | Create a sample generator that slices another generator.
 orSlice :: Rate -> Arc Time -> Samples -> Samples

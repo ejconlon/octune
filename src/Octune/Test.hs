@@ -4,7 +4,6 @@ import Bowtie (Fix (..), memoKey, pattern MemoP)
 import Control.Exception (throwIO)
 import Control.Monad (forM)
 import Control.Monad.IO.Class (MonadIO (..))
-import Dahdit.Sizes (ElemCount (..))
 import Data.Foldable (for_, toList)
 import Data.Map.Strict qualified as Map
 import Data.Primitive.PrimArray (primArrayFromList)
@@ -19,14 +18,12 @@ import Data.Sounds
   , Op
   , OpF (..)
   , Overlap (..)
-  , QDelta (..)
   , QTime (..)
   , Rate (..)
   , Samples (..)
   , Time (..)
   , arcDeltaCover
   , arcDeltaCoverMax
-  , arcFrom
   , arcLen
   , arcOverlap
   , arcRelative
@@ -38,10 +35,8 @@ import Data.Sounds
   , opAnnoExtentSingle
   , opAnnoExtentTopo
   , opRenderSingle
-  , opRenderSingleOn
   , opRenderTopo
   , quantizeArc
-  , quantizeDelta
   , unquantizeArc
   )
 import Data.Topo (SortErr, topoSort)
