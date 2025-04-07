@@ -3,16 +3,12 @@
 module Data.Sounds where
 
 import Bowtie (Anno (..), Fix (..), Memo, cataM, memoFix, memoKey, mkMemoM, pattern MemoP)
-import Control.Applicative (Alternative (..))
 import Control.DeepSeq (NFData)
-import Control.Monad (unless, void, when, (>=>))
-import Control.Monad.Except (ExceptT, MonadError (..), runExceptT)
-import Control.Monad.IO.Class (MonadIO (..))
-import Control.Monad.Identity (Identity (..))
-import Control.Monad.Primitive (PrimMonad (..), RealWorld)
+import Control.Monad (unless, when, (>=>))
+import Control.Monad.Identity (Identity (..), runIdentity)
+import Control.Monad.Primitive (PrimMonad (..), PrimState, RealWorld)
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.Trans (lift)
-import Control.Monad.Trans.Maybe (MaybeT (..))
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
 import Dahdit.LiftedPrimArray (LiftedPrimArray (..))
@@ -21,7 +17,7 @@ import Data.Foldable (fold, foldl', for_, toList)
 import Data.Functor.Foldable (Recursive (..), cata)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
-import Data.PrimPar (Mutex, PrimPar, newMutex, runPrimPar, withMutex)
+import Data.PrimPar (Mutex, PrimPar, newMutex, runPrimPar)
 import Data.Primitive.ByteArray (ByteArray (..))
 import Data.Primitive.PrimArray
   ( MutablePrimArray
@@ -687,15 +683,15 @@ opAnnoExtentTopo :: (Ord n) => Rate -> Map n (Op n) -> Either (SortErr n) (Map n
 opAnnoExtentTopo rate m = topoAnnoM opRefs m (opInferExtentF rate)
 
 -- | A type representing audio samples.
-newtype Samples = Samples {runSamples :: Arc Time -> InternalSamples}
+newtype Samples = Samples {runSamples :: Arc QTime -> InternalSamples}
 
 -- | Create empty samples for a given arc.
-arrEmptyArc :: Rate -> Arc Time -> InternalSamples
+arrEmptyArc :: Rate -> Arc QTime -> InternalSamples
 arrEmptyArc rate = arrEmptyDelta rate . arcLen
 
 -- | Create empty samples for a given delta.
-arrEmptyDelta :: Rate -> Delta -> InternalSamples
-arrEmptyDelta rate d = isampsConstant (fromIntegral (quantizeDelta rate d)) 0
+arrEmptyDelta :: Rate -> QDelta -> InternalSamples
+arrEmptyDelta _ d = isampsConstant (fromIntegral d) 0
 
 -- | Create an empty sample generator.
 orEmpty :: Rate -> Samples
@@ -707,9 +703,8 @@ orSamp rate x =
   let i = fromIntegral (isampsLength x)
   in  if i == 0
         then orEmpty rate
-        else Samples $ \arc ->
-          let Arc s e = quantizeArc rate arc
-              s' = max 0 s
+        else Samples $ \(Arc s e) ->
+          let s' = max 0 s
               e' = min i e
               l = e - s
               l' = e' - s'
@@ -730,28 +725,25 @@ orRepeat rate n rext rsamp =
     else case extentPosArc rext of
       Nothing -> Samples (arrEmptyArc rate)
       Just sarc ->
-        let repLen = arcLen sarc
+        let repLen = quantizeDelta rate (arcLen sarc)
         in  Samples $ \arc ->
-              case arcDeltaCoverMax repLen n arc of
-                Nothing -> arrEmptyArc rate arc
-                Just (negDelta, firstN, cappedN, beyondMax) ->
-                  let
-                    renderRep rep =
+              let sarc' = unquantizeArc rate arc
+              in  case arcDeltaCoverMax (unquantizeDelta rate repLen) n sarc' of
+                    Nothing -> arrEmptyArc rate arc
+                    Just (_, firstN, cappedN, _) ->
                       let
-                        repDelta = Delta (fromInteger rep * unDelta repLen)
-                        repArc = Arc (addDelta (arcStart sarc) repDelta) (addDelta (arcEnd sarc) repDelta)
+                        renderRep rep =
+                          let
+                            repDelta = QDelta (rep * unQDelta repLen)
+                            repArc = Arc (addDelta (arcStart arc) repDelta) (addDelta (arcStart arc) (repDelta + repLen))
+                          in
+                            case arcIntersect arc repArc of
+                              Nothing -> arrEmptyArc rate arc
+                              Just subArc ->
+                                let relArc = Arc (addDelta (arcStart subArc) (negate repDelta)) (addDelta (arcEnd subArc) (negate repDelta))
+                                in  runSamples rsamp relArc
                       in
-                        case arcIntersect arc repArc of
-                          Nothing -> error "impossible"
-                          Just subArc ->
-                            let relArc = Arc (addDelta (arcStart subArc) (negate repDelta)) (addDelta (arcEnd subArc) (negate repDelta))
-                            in  runSamples rsamp relArc
-                    allSamps =
-                      [arrEmptyDelta rate negDelta]
-                        ++ map renderRep [firstN .. cappedN - 1]
-                        ++ [arrEmptyDelta rate beyondMax]
-                  in
-                    isampsConcat allSamps
+                        isampsConcat (map renderRep [firstN .. cappedN - 1])
 
 -- | Create a sample generator that slices another generator.
 orSlice :: Rate -> Arc Time -> Samples -> Samples
@@ -761,25 +753,25 @@ orSlice rate sarc rsamp =
     else Samples $ \arc ->
       -- NOTE: We must use arcRelative here because the current arc and the slice arc
       -- are essentially in different frames of reference.
-      case arcRelative arc sarc of
+      case arcRelative (unquantizeArc rate arc) sarc of
         Just (before, arc', after) ->
-          let preSamps = arrEmptyDelta rate before
-              bodySamps = runSamples rsamp arc'
-              postSamps = arrEmptyDelta rate after
+          let preSamps = arrEmptyDelta rate (quantizeDelta rate before)
+              bodySamps = runSamples rsamp (quantizeArc rate arc')
+              postSamps = arrEmptyDelta rate (quantizeDelta rate after)
               samps = [preSamps, bodySamps, postSamps]
           in  isampsConcat samps
         Nothing -> arrEmptyArc rate arc
 
 -- | Create a sample generator that shifts another generator in time.
 orShift :: Rate -> Delta -> Samples -> Samples
-orShift _rate c rsamp = Samples $ \arc ->
-  runSamples rsamp (arcShift arc c)
+orShift rate c rsamp = Samples $ \arc ->
+  runSamples rsamp (quantizeArc rate (arcShift (unquantizeArc rate arc) c))
 
 -- | Create a sample generator that concatenates multiple generators.
 orConcat :: Rate -> Seq (Anno Extent Samples) -> Samples
 orConcat rate rs =
   let gather dta@(d, t, a) (Anno l g) =
-        let q = extentLen l
+        let q = quantizeDelta rate (extentLen l)
         in  if q <= 0
               then dta
               else
@@ -789,7 +781,7 @@ orConcat rate rs =
       (_, tot, subArcs) = foldl' gather (0, 0, Empty) rs
       whole = Arc 0 tot
   in  Samples $ \arc ->
-        let elemLen = quantizeDelta rate (arcLen arc)
+        let elemLen = arcLen arc
         in  case arcOverlap arc whole of
               OverlapOn before filtArc after ->
                 let preSamps = arrEmptyDelta rate before
@@ -836,14 +828,14 @@ opRenderSingleOn :: Rate -> Op n -> Arc Time -> Either n InternalSamples
 opRenderSingleOn rate op arc = do
   op' <- opAnnoExtentSingle rate op
   samps <- opRender rate Left op'
-  pure (runSamples samps arc)
+  pure (runSamples samps (quantizeArc rate arc))
 
 -- | Render an operation to samples, handling references with Left.
 opRenderSingle :: Rate -> Op n -> Either n InternalSamples
 opRenderSingle rate op = do
   op' <- opAnnoExtentSingle rate op
   samps <- opRender rate Left op'
-  pure (maybe isampsEmpty (runSamples samps) (extentPosArc (memoKey op')))
+  pure (maybe isampsEmpty (runSamples samps . quantizeArc rate) (extentPosArc (memoKey op')))
 
 -- | A view of an array with bounds.
 data View z = View
