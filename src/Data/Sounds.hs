@@ -740,11 +740,11 @@ orRepeat rate n rext rsamp =
 
                       case arcDeltaCoverMax repLenU n arc' of
                         Nothing -> pure finalMArr -- No overlap
-                        Just (paddingBeforeT, firstN, cappedN, _) -> do
+                        Just (paddingBeforeU, firstN, cappedN, _) -> do
                           -- Ignore paddingAfterT
                           when (firstN < cappedN) $ do
                             -- Check if there are any repetitions to process
-                            let prePaddingQ = quantizeDelta rate paddingBeforeT
+                            let prePaddingQ = quantizeDelta rate paddingBeforeU
 
                             -- Advance offset for pre-padding
                             writeSTRef writeOffsetRef (min targetLenQ prePaddingQ)
@@ -753,27 +753,27 @@ orRepeat rate n rext rsamp =
                             let firstRepIdx = firstN
                                 lastRepIdx = cappedN - 1
                                 firstRepStartDeltaU = fromIntegral firstRepIdx * repLenU
-                                firstRepStartT = addDelta (Time 0) firstRepStartDeltaU
-                                firstRepArcT = arcFrom firstRepStartT repLenU
-                                mFirstIntersectT = arcIntersect arc' firstRepArcT
+                                firstRepStartU = addDelta (Time 0) firstRepStartDeltaU
+                                firstRepArcU = arcFrom firstRepStartU repLenU
+                                mFirstIntersectU = arcIntersect arc' firstRepArcU
 
                                 lastRepStartDeltaU = fromIntegral lastRepIdx * repLenU
-                                lastRepStartT = addDelta (Time 0) lastRepStartDeltaU
-                                lastRepArcT = arcFrom lastRepStartT repLenU
-                                mLastIntersectT = arcIntersect arc' lastRepArcT
+                                lastRepStartU = addDelta (Time 0) lastRepStartDeltaU
+                                lastRepArcU = arcFrom lastRepStartU repLenU
+                                mLastIntersectU = arcIntersect arc' lastRepArcU
 
                             -- Determine relative arcs for partial segments
                             let calcRelArc intersectDelta startDelta =
                                   case intersectDelta of
                                     Nothing -> Nothing
-                                    Just subArcT -> Just (arcShift subArcT (negate startDelta))
+                                    Just subArcU -> Just (arcShift subArcU (negate startDelta))
 
-                            let mFirstRelArcT = calcRelArc mFirstIntersectT firstRepStartDeltaU
-                                mLastRelArcT = calcRelArc mLastIntersectT lastRepStartDeltaU
+                            let mFirstRelArcU = calcRelArc mFirstIntersectU firstRepStartDeltaU
+                                mLastRelArcU = calcRelArc mLastIntersectU lastRepStartDeltaU
 
                             -- Quantize relative arcs to check lengths deterministically
-                            let mFirstRelArcQ = quantizeArc rate <$> mFirstRelArcT
-                                mLastRelArcQ = quantizeArc rate <$> mLastRelArcT
+                            let mFirstRelArcQ = quantizeArc rate <$> mFirstRelArcU
+                                mLastRelArcQ = quantizeArc rate <$> mLastRelArcU
 
                             -- Check if first/last are partial based on quantized length
                             let isFirstPartial = maybe False (\qArc -> arcLen qArc < repLenQ) mFirstRelArcQ
@@ -786,9 +786,9 @@ orRepeat rate n rext rsamp =
                             -- firstFullRepIdx = firstRepIdx + (if isFirstPartial then 1 else 0) -- Not needed directly
 
                             -- Render required segments (max 3)
-                            let mPrefixSamps = if isFirstPartial then renderSegment rate rsamp =<< mFirstRelArcT else Nothing
+                            let mPrefixSamps = if isFirstPartial then renderSegment rate rsamp =<< mFirstRelArcU else Nothing
                                 mFullSamps = if numFullReps > 0 then renderSegment rate rsamp (arcFrom (Time 0) repLenU) else Nothing -- Use arcFrom
-                                mSuffixSamps = if firstRepIdx /= lastRepIdx && isLastPartial then renderSegment rate rsamp =<< mLastRelArcT else Nothing
+                                mSuffixSamps = if firstRepIdx /= lastRepIdx && isLastPartial then renderSegment rate rsamp =<< mLastRelArcU else Nothing
 
                             -- Assemble by copying segments
                             copySegment finalMArr writeOffsetRef targetLenQ mPrefixSamps
@@ -800,8 +800,8 @@ orRepeat rate n rext rsamp =
 
 -- Helper to calculate and render a segment
 renderSegment :: Rate -> Samples -> Arc Time -> Maybe InternalSamples
-renderSegment rate sampler relArcT =
-  let relArcQ = quantizeArc rate relArcT
+renderSegment rate sampler relArcU =
+  let relArcQ = quantizeArc rate relArcU
   in  if arcNull relArcQ then Nothing else Just (runSamples sampler relArcQ)
 
 -- Helper to copy rendered samples into the target array
