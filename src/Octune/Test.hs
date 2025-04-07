@@ -19,7 +19,8 @@ import Data.Sounds
   , Op
   , OpF (..)
   , Overlap (..)
-  , Quantize (..)
+  , QTime (..)
+  , QDelta (..)
   , Rate (..)
   , Samples (..)
   , Time (..)
@@ -38,7 +39,8 @@ import Data.Sounds
   , opRenderSingle
   , opRenderSingleOn
   , opRenderTopo
-  , quantize
+  , quantizeArc
+  , unquantizeArc
   )
 import Data.Topo (SortErr, topoSort)
 import Data.Traversable (for)
@@ -182,10 +184,12 @@ utilTests lim =
             b = max a0 b0
             arc = Arc a b
         d <- forAll (fmap Delta genReal)
-        let qbefore = quantize @Time @_ @ElemCount rate arc
-            lbefore = arcLen @ElemCount qbefore
-        let qafter = quantize @Time @_ @ElemCount rate (arcShift arc d)
-            lafter = arcLen @ElemCount qafter
+        let qbefore = quantizeArc rate arc
+            Arc s1 e1 = qbefore
+            lbefore = arcLen @QTime (Arc s1 e1) :: QDelta
+        let qafter = quantizeArc rate (arcShift arc d)
+            Arc s2 e2 = qafter
+            lafter = arcLen @QTime (Arc s2 e2) :: QDelta
         lafter === lbefore
     , testProp "prop quantize inverse 1" lim $ do
         let genInt = Gen.integral (Range.linearFrom 0 (-100) 100)
@@ -194,53 +198,61 @@ utilTests lim =
         a0 <- forAll (fmap (Time . (/ unRate rate) . fromInteger) genInt)
         b0 <- forAll (fmap (Time . (/ unRate rate) . fromInteger) genInt)
         let arc = Arc a0 b0
-        let q = quantize @Time @_ @ElemCount rate arc
-        let u = unquantize @Time @_ @ElemCount rate q
+        let q = quantizeArc rate arc
+        let u = unquantizeArc rate q
         u === arc
     , testProp "prop quantize inverse 2" lim $ do
         let genInt = Gen.integral (Range.linearFrom 0 (-100) 100)
             genSmallPosReal = Gen.realFrac_ (Range.linearFrac 1 10)
         rate <- forAll (fmap Rate genSmallPosReal)
-        a0 <- forAll (fmap ElemCount genInt)
-        b0 <- forAll (fmap ElemCount genInt)
+        a0 <- forAll (fmap QTime genInt)
+        b0 <- forAll (fmap QTime genInt)
         let arc = Arc a0 b0
-        let u = unquantize @Time @_ @ElemCount rate arc
-        let q = quantize @Time @_ @ElemCount rate u
+        let u = unquantizeArc rate arc
+        let q = quantizeArc rate u
         q === arc
     , testUnit "quantize cases" $ do
         let rate = Rate 1
         -- Test empty arcs
-        quantize @Time @_ @ElemCount rate (Arc 0 0) === Arc 0 0
-        quantize @Time @_ @ElemCount rate (Arc 1 1) === Arc 1 1
-        quantize @Time @_ @ElemCount rate (Arc (-1) (-1)) === Arc (-1) (-1)
+        quantizeArc rate (Arc 0 0) === Arc 0 0
+        quantizeArc rate (Arc 1 1) === Arc 1 1
+        quantizeArc rate (Arc (-1) (-1)) === Arc (-1) (-1)
 
         -- Test basic positive arcs
-        quantize @Time @_ @ElemCount rate (Arc 0 1) === Arc 0 1
-        quantize @Time @_ @ElemCount rate (Arc 0.1 1.1) === Arc 0 1
-        quantize @Time @_ @ElemCount rate (Arc 0.9 1.9) === Arc 0 1
+        quantizeArc rate (Arc 0 1) === Arc 0 1
+        quantizeArc rate (Arc 0.1 1.1) === Arc 0 1
+        quantizeArc rate (Arc 0.9 1.9) === Arc 0 1
 
         -- Test basic negative arcs
-        quantize @Time @_ @ElemCount rate (Arc (-1) 0) === Arc (-1) 0
-        quantize @Time @_ @ElemCount rate (Arc (-1.1) (-0.1)) === Arc (-2) (-1)
-        quantize @Time @_ @ElemCount rate (Arc (-1.9) (-0.9)) === Arc (-2) (-1)
+        quantizeArc rate (Arc (-1) 0) === Arc (-1) 0
+        quantizeArc rate (Arc (-1.1) (-0.1)) === Arc (-2) (-1)
+        quantizeArc rate (Arc (-1.9) (-0.9)) === Arc (-2) (-1)
 
         -- Test shift invariance
         let arc1 = Arc (0 :: Time) 1
             arc2 = Arc ((-1) :: Time) 0
             arc3 = Arc (0.5 :: Time) 1.5
             arc4 = Arc ((-0.5) :: Time) 0.5
-        arcLen @ElemCount (quantize rate arc1) === arcLen @ElemCount (quantize rate arc2)
-        arcLen @ElemCount (quantize rate arc3) === arcLen @ElemCount (quantize rate arc4)
+            qarc1 = quantizeArc rate arc1
+            qarc2 = quantizeArc rate arc2
+            qarc3 = quantizeArc rate arc3
+            qarc4 = quantizeArc rate arc4
+            len1 = arcLen @QTime qarc1 :: QDelta
+            len2 = arcLen @QTime qarc2 :: QDelta
+            len3 = arcLen @QTime qarc3 :: QDelta
+            len4 = arcLen @QTime qarc4 :: QDelta
+        len1 === len2
+        len3 === len4
 
         -- Test fractional lengths
-        quantize @Time @_ @ElemCount rate (Arc 0 0.5) === Arc 0 1
-        quantize @Time @_ @ElemCount rate (Arc 0 1.5) === Arc 0 2
-        quantize @Time @_ @ElemCount rate (Arc (-0.5) 0) === Arc (-1) 0
-        quantize @Time @_ @ElemCount rate (Arc (-1.5) 0) === Arc (-2) 0
+        quantizeArc rate (Arc 0 0.5) === Arc 0 1
+        quantizeArc rate (Arc 0 1.5) === Arc 0 2
+        quantizeArc rate (Arc (-0.5) 0) === Arc (-1) 0
+        quantizeArc rate (Arc (-1.5) 0) === Arc (-2) 0
 
         -- Test arcs spanning zero
-        quantize @Time @_ @ElemCount rate (Arc (-0.7) 0.7) === Arc (-1) 1
-        quantize @Time @_ @ElemCount rate (Arc (-1.2) 1.2) === Arc (-2) 1
+        quantizeArc rate (Arc (-0.7) 0.7) === Arc (-1) 1
+        quantizeArc rate (Arc (-1.2) 1.2) === Arc (-2) 1
     ]
 
 opTests :: TestLimit -> TestTree

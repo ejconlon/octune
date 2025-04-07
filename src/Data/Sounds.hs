@@ -322,18 +322,6 @@ class (Ord t, Ord d, Num d) => Measure t d | t -> d where
   -- | Add a delta to a point.
   addDelta :: t -> d -> t
 
-instance Measure ElemCount ElemCount where
-  measureDelta c1 c2 = c2 - c1
-  addDelta c d = c + d
-
--- | A type class for converting between continuous and discrete representations of time.
-class (Ord t, Ord r) => Quantize t r | t -> r where
-  -- | Convert a continuous time arc to a discrete arc.
-  quantize :: (Integral u) => r -> Arc t -> Arc u
-
-  -- | Convert a discrete arc back to a continuous time arc.
-  unquantize :: (Integral u) => r -> Arc u -> Arc t
-
 -- | A continuous time value represented as a rational number.
 newtype Time = Time {unTime :: Rational}
   deriving stock (Eq, Show)
@@ -344,34 +332,56 @@ newtype Delta = Delta {unDelta :: Rational}
   deriving stock (Eq, Show)
   deriving newtype (Num, Ord, Enum, Real, Fractional, RealFrac)
 
--- deriving (Semigroup, Monoid) via (Sum Rational)
-
 instance Measure Time Delta where
   measureDelta (Time t1) (Time t2) = Delta (t2 - t1)
   addDelta (Time t) (Delta d) = Time (t + d)
+
+-- | A quantized time value represented as an integer.
+newtype QTime = QTime {unQTime :: Integer}
+  deriving stock (Eq, Show)
+  deriving newtype (Num, Ord, Enum, Real, Integral)
+
+-- | A quantized time delta value represented as an integer.
+newtype QDelta = QDelta {unQDelta :: Integer}
+  deriving stock (Eq, Show)
+  deriving newtype (Num, Ord, Enum, Real, Integral)
+
+instance Measure QTime QDelta where
+  measureDelta (QTime q1) (QTime q2) = QDelta (q2 - q1)
+  addDelta (QTime q) (QDelta d) = QTime (q + d)
 
 -- | A rate value representing "things per unit time" as a rational number.
 newtype Rate = Rate {unRate :: Rational}
   deriving stock (Eq, Show)
   deriving newtype (Num, Ord, Enum, Real, Fractional, RealFrac)
 
-instance Quantize Time Rate where
-  quantize (Rate r) (Arc (Time s) (Time e)) =
-    let qstart = floor (s * r)
-    in  if s == e
-          then Arc qstart qstart
-          else
-            let qlen = ceiling ((e - s) * r)
-                qend = qstart + qlen
-            in  Arc qstart qend
-  unquantize (Rate r) (Arc s e) = Arc (Time (fromIntegral s / r)) (Time (fromIntegral e / r))
+-- | Convert a continuous time arc to a discrete arc.
+quantizeArc :: Rate -> Arc Time -> Arc QTime
+quantizeArc (Rate r) (Arc (Time s) (Time e)) =
+  let qstart = floor (s * r)
+  in  if s == e
+        then Arc qstart qstart
+        else
+          let qlen = ceiling ((e - s) * r)
+              qend = qstart + qlen
+          in  Arc qstart qend
+
+quantizeDelta :: Rate -> Delta -> QDelta
+quantizeDelta (Rate r) (Delta d) = QDelta (ceiling (d * r))
+
+-- | Convert a discrete arc back to a continuous time arc.
+unquantizeArc :: Rate -> Arc QTime -> Arc Time
+unquantizeArc (Rate r) (Arc (QTime s) (QTime e)) = Arc (Time (fromIntegral s / r)) (Time (fromIntegral e / r))
+
+unquantizeDelta :: Rate -> QDelta -> Delta
+unquantizeDelta (Rate r) (QDelta d) = Delta (fromIntegral d / r)
 
 -- | A number of repetitions represented as a rational number.
 newtype Reps = Reps {unReps :: Rational}
   deriving stock (Eq, Show)
   deriving newtype (Num, Ord, Enum, Real, Fractional, RealFrac)
 
-mulReps :: (Fractional d) => Reps -> d -> d
+mulReps :: Reps -> Delta -> Delta
 mulReps (Reps n) d = fromRational n * d
 
 -- | A half-open interval [start, end) representing a range of values.
@@ -423,7 +433,7 @@ arcShift :: (Measure t d) => Arc t -> d -> Arc t
 arcShift (Arc s e) d = Arc (addDelta s d) (addDelta e d)
 
 -- | Repeat an arc a given number of times.
-arcRepeat :: (Measure t d, Fractional d) => Reps -> Arc t -> Arc t
+arcRepeat :: Reps -> Arc Time -> Arc Time
 arcRepeat n (Arc s e) = Arc s (addDelta s (mulReps n (measureDelta s e)))
 
 -- | Calculate how many times a delta fits into an arc.
@@ -644,7 +654,7 @@ opInferExtentF rate onRef = \case
     in  pure $
           if i == 0
             then extentEmpty
-            else mkExtent (unquantize rate (Arc 0 i))
+            else extentFromDelta (unquantizeDelta rate (fromIntegral i))
   OpRepeat n r -> pure (extentRepeat n r)
   OpSlice sarc _ -> pure (extentFromDelta (arcLen sarc))
   OpShift c r -> pure (extentShift r (negate c))
@@ -681,11 +691,11 @@ newtype Samples = Samples {runSamples :: Arc Time -> InternalSamples}
 
 -- | Create empty samples for a given arc.
 arrEmptyArc :: Rate -> Arc Time -> InternalSamples
-arrEmptyArc rate arc = isampsConstant (arcLen @ElemCount (quantize rate arc)) 0
+arrEmptyArc rate = arrEmptyDelta rate . arcLen
 
 -- | Create empty samples for a given delta.
 arrEmptyDelta :: Rate -> Delta -> InternalSamples
-arrEmptyDelta rate d = isampsConstant (arcLen @ElemCount (quantize @Time rate (arcFrom 0 d))) 0
+arrEmptyDelta rate d = isampsConstant (fromIntegral (quantizeDelta rate d)) 0
 
 -- | Create an empty sample generator.
 orEmpty :: Rate -> Samples
@@ -694,21 +704,21 @@ orEmpty = Samples . arrEmptyArc
 -- | Create a sample generator from constant samples.
 orSamp :: Rate -> InternalSamples -> Samples
 orSamp rate x =
-  let i = isampsLength x
+  let i = fromIntegral (isampsLength x)
   in  if i == 0
         then orEmpty rate
         else Samples $ \arc ->
-          let Arc s e = quantize rate arc
+          let Arc s e = quantizeArc rate arc
               s' = max 0 s
               e' = min i e
               l = e - s
               l' = e' - s'
           in  if s' >= i || e' <= 0 || s' >= e'
-                then isampsConstant l 0
+                then isampsConstant (fromIntegral l) 0
                 else
-                  let preSamps = isampsConstant (s' - s) 0
-                      postSamps = isampsConstant (e - e') 0
-                      bodySamps = isampsTrim s' l' x
+                  let preSamps = isampsConstant (fromIntegral (s' - s)) 0
+                      postSamps = isampsConstant (fromIntegral (e - e')) 0
+                      bodySamps = isampsTrim (fromIntegral s') (fromIntegral l') x
                       samps = [preSamps, bodySamps, postSamps]
                   in  isampsConcat samps
 
@@ -779,7 +789,7 @@ orConcat rate rs =
       (_, tot, subArcs) = foldl' gather (0, 0, Empty) rs
       whole = Arc 0 tot
   in  Samples $ \arc ->
-        let elemLen = arcLen @ElemCount (quantize rate arc)
+        let elemLen = quantizeDelta rate (arcLen arc)
         in  case arcOverlap arc whole of
               OverlapOn before filtArc after ->
                 let preSamps = arrEmptyDelta rate before
@@ -796,7 +806,7 @@ orConcat rate rs =
                           OverlapGt -> gen samps rest
                     genSamps = gen Empty subArcs
                 in  isampsConcat (toList (preSamps :<| (genSamps :|> postSamps)))
-              _ -> isampsConstant elemLen 0
+              _ -> isampsConstant (fromIntegral elemLen) 0
 
 -- | Create a sample generator that merges multiple generators by mixing their samples.
 orMerge :: [Samples] -> Samples
@@ -837,7 +847,7 @@ opRenderSingle rate op = do
 
 -- | A view of an array with bounds.
 data View z = View
-  { viewBounds :: !(Arc ElemCount)
+  { viewBounds :: !(Arc QTime)
   -- ^ The bounds of the view
   , viewArray :: !z
   -- ^ The array being viewed
@@ -845,7 +855,7 @@ data View z = View
   deriving stock (Eq, Ord, Show)
 
 -- | Get the length of a view.
-viewLen :: View z -> ElemCount
+viewLen :: View z -> QDelta
 viewLen = arcLen . viewBounds
 
 -- | Check if a view is empty.
@@ -853,11 +863,11 @@ viewNull :: View z -> Bool
 viewNull = arcNull . viewBounds
 
 -- | Skip a number of elements from the start of a view.
-viewSkip :: ElemCount -> View z -> Maybe (View z)
+viewSkip :: QDelta -> View z -> Maybe (View z)
 viewSkip skip (View bounds arr) = fmap (`View` arr) (arcSkip skip bounds)
 
 -- | Narrow a view to a relative sub-range.
-viewNarrow :: Arc ElemCount -> View z -> Maybe (View z)
+viewNarrow :: Arc QTime -> View z -> Maybe (View z)
 viewNarrow rel (View bounds arr) = fmap (`View` arr) (arcNarrow rel bounds)
 
 -- | A view of a primitive array.
@@ -865,7 +875,7 @@ type ArrayView a = View (PrimArray a)
 
 -- | Create a view of a primitive array.
 avNew :: (Prim a) => PrimArray a -> ArrayView a
-avNew arr = View (Arc 0 (ElemCount (sizeofPrimArray arr))) arr
+avNew arr = View (Arc 0 (fromIntegral (sizeofPrimArray arr))) arr
 
 -- | A view of a mutable primitive array.
 type MutArrayView s a = View (MutablePrimArray s a)
@@ -878,7 +888,7 @@ type PrimMonadState s m = (PrimMonad m, PrimState m ~ s)
 
 -- | Create a view of a mutable primitive array.
 mavNew :: (PrimMonadState s m, Prim a) => MutablePrimArray s a -> m (MutArrayView s a)
-mavNew arr = fmap (\len -> View (Arc 0 (ElemCount len)) arr) (getSizeofMutablePrimArray arr)
+mavNew arr = fmap (\len -> View (Arc 0 (QTime (fromIntegral len))) arr) (getSizeofMutablePrimArray arr)
 
 -- | Copy from an array view to a mutable array view.
 mavCopy :: (PrimMonadState s m, Prim a) => MutArrayView s a -> ArrayView a -> m ()
@@ -888,7 +898,7 @@ mavCopy (View darc@(Arc dstart _) darr) (View sarc@(Arc sstart _) sarr) = do
       len = min slen dlen
   when
     (len > 0)
-    (copyPrimArray darr (unElemCount dstart) sarr (unElemCount sstart) (unElemCount len))
+    (copyPrimArray darr (fromIntegral dstart) sarr (fromIntegral sstart) (fromIntegral len))
 
 -- | A type representing mutable samples.
 newtype MutSamples = MutSamples {runMutSamples :: Arc Time -> Mutex (ParArrayView Int32) -> PrimPar ()}
@@ -896,8 +906,8 @@ newtype MutSamples = MutSamples {runMutSamples :: Arc Time -> Mutex (ParArrayVie
 -- | Run mutable samples to produce a primitive array.
 runMutSamplesSimple :: Rate -> MutSamples -> Arc Time -> IO (PrimArray Int32)
 runMutSamplesSimple rate samps arc = do
-  let elemsLen = arcLen @ElemCount (quantize rate arc)
-  arr <- zeroPrimArray (unElemCount elemsLen)
+  let elemsLen = quantizeDelta rate (arcLen arc)
+  arr <- zeroPrimArray (fromIntegral elemsLen)
   mutView <- mavNew arr
   runPrimPar $ do
     bufVar <- newMutex mutView
