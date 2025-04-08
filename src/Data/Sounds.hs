@@ -546,7 +546,7 @@ arcOverlap (Arc ns ne) (Arc hs he) =
 -- Example: 'arcRelative (Arc (-1) 8) (Arc 10 15) == Just (1, Arc 10 15, 2)'.
 -- Returns Just a tuple of:
 --   * The amount of time before the second arc that's in the first arc (always non-negative)
---   * The overlapping portion of the arcs
+--   * The relevant portion of the second arc.
 --   * The amount of time after the second arc that's in the first arc (always non-negative)
 -- Or Nothing if the resulting arc is empty.
 -- Invariants:
@@ -572,12 +572,7 @@ arcSkip d (Arc bs be) =
 
 -- | Narrow an arc to a relative sub-range.
 arcNarrow :: (Measure t d, Num t) => Arc t -> Arc t -> Maybe (Arc t)
-arcNarrow rel@(Arc rs _) base@(Arc bs _) =
-  let s = bs + rs
-      l = min (arcLen rel) (arcLen base)
-  in  if l <= 0
-        then Nothing
-        else Just (arcFrom s l)
+arcNarrow rel base = fmap (\(_, arc, _) -> arc) (arcRelative rel base)
 
 -- | A type representing audio operations.
 data OpF n r
@@ -998,17 +993,35 @@ mavCopy (View darc@(Arc dstart _) darr) (View sarc@(Arc sstart _) sarr) = do
   let slen = arcLen sarc
       dlen = arcLen darc
       len = min slen dlen
-  when (len > 0) $ withMutex darr $ \arr ->
-    copyPrimArray arr (fromIntegral dstart) sarr (fromIntegral sstart) (fromIntegral len)
+  withMutex darr $ \marr -> do
+    mlen <- getSizeofMutablePrimArray marr
+    let bad = len <= 0
+          || dstart < 0
+          || sstart < 0
+          || fromIntegral dlen > mlen
+          || fromIntegral dstart + fromIntegral len > dlen
+          || fromIntegral sstart + fromIntegral len > slen
+    if bad
+      then error "mavCopy: out of bounds"
+      else copyPrimArray marr (fromIntegral dstart) sarr (fromIntegral sstart) (fromIntegral len)
 
 -- | Copy a segment within a mutable array view.
 copyWithinMav :: (ParMonad m, Prim a) => MutArrayView a -> QTime -> QTime -> QDelta -> m ()
-copyWithinMav (View (Arc mavS _) mavMutex) srcRelOffset destRelOffset copyLen =
-  when (copyLen > 0) $ do
-    let srcAbsOffset = mavS + srcRelOffset
-        destAbsOffset = mavS + destRelOffset
-    withMutex mavMutex $ \marr ->
-      copyMutablePrimArray marr (fromIntegral destAbsOffset) marr (fromIntegral srcAbsOffset) (fromIntegral copyLen)
+copyWithinMav (View darc@(Arc mavS _) mavMutex) srcRelOffset destRelOffset copyLen = do
+  let dlen = arcLen darc
+  let srcAbsOffset = mavS + srcRelOffset
+      destAbsOffset = mavS + destRelOffset
+  withMutex mavMutex $ \marr -> do
+    mlen <- getSizeofMutablePrimArray marr
+    let bad = copyLen <= 0
+          || srcAbsOffset < 0
+          || destAbsOffset < 0
+          || fromIntegral dlen > mlen
+          || fromIntegral srcAbsOffset + fromIntegral copyLen > mlen
+          || fromIntegral destAbsOffset + fromIntegral copyLen > mlen
+    if bad
+      then error "copyWithinMav: out of bounds"
+      else copyMutablePrimArray marr (fromIntegral destAbsOffset) marr (fromIntegral srcAbsOffset) (fromIntegral copyLen)
 
 -- | A type representing mutable samples.
 newtype MutSamples = MutSamples {runMutSamples :: Arc QTime -> MutArrayView Int32 -> PrimPar ()}

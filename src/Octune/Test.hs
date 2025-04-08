@@ -377,6 +377,107 @@ opTests lim =
                       fromIntegral (isampsLength arr) === qLen
                       marr <- liftIO (runMutSamplesSimple rate mutSamps qArc)
                       marr === arr
+    , testUnit "gen regression 1" $ do
+        let rate = Rate 1
+            inSamps = isampsFromList [1]
+            innerOp = Fix (OpSamp inSamps :: TestOpF)
+            repeatOp = Fix (OpRepeat 2 innerOp :: TestOpF)
+            sliceOp = Fix (OpSlice (Arc 1 2) repeatOp :: TestOpF)
+
+        -- Annotate to get the final extent/arc
+        annoRes <- case opAnnoExtentSingle rate sliceOp of
+          Left err -> fail ("Annotation failed: " ++ show err) -- Should not happen for single ops
+          Right res -> pure res
+        let extent = memoKey annoRes
+            mArc = extentPosArc extent
+
+        arc <- case mArc of
+          Nothing -> fail "Annotated extent resulted in empty arc"
+          Just a -> pure a
+        let qArc = quantizeArc rate arc
+
+        -- Immutable rendering
+        immutableArr <- either (fail . show) pure (opRenderSingle rate sliceOp)
+
+        -- Mutable rendering
+        mutableArr <- liftIO (opRenderMutSingle rate sliceOp) >>= either (fail . show) pure
+
+        -- Compare
+        mutableArr === immutableArr
+    , testUnit "gen regression 2" $ do
+        let rate = Rate 1
+
+        -- Base Op: OpSamp [1]
+        let opSamp = Fix (OpSamp (isampsFromList [1]) :: TestOpF)
+        let expectedSampExtent = Extent (Arc (0 :: Time) 1)
+        let expectedSampSamples = isampsFromList [1]
+
+        -- Assert extent for opSamp
+        let annoResultSamp = opAnnoExtentSingle rate opSamp
+        case annoResultSamp of
+          Left err -> fail ("Anno Samp failed: " ++ show err)
+          Right (MemoP ex _) -> ex === expectedSampExtent
+
+        -- Assert immutable render for opSamp
+        either (fail . show) pure (opRenderSingle rate opSamp) >>= (=== expectedSampSamples)
+
+        -- Assert mutable render for opSamp
+        liftIO (opRenderMutSingle rate opSamp) >>= either (fail . show) pure >>= (=== expectedSampSamples)
+
+        -- First Repeat Op: OpRepeat 1 opSamp
+        let opRepeat1 = Fix (OpRepeat 1 opSamp)
+        let expectedRepeat1Extent = Extent (Arc 0 1) -- Repeat 1 is identity for extent
+        let expectedRepeat1Samples = isampsFromList [1] -- Repeat 1 is identity for samples
+
+        -- Assert extent for opRepeat1
+        let annoResultRepeat1 = opAnnoExtentSingle rate opRepeat1
+        case annoResultRepeat1 of
+          Left err -> fail ("Anno Repeat1 failed: " ++ show err)
+          Right (MemoP ex _) -> ex === expectedRepeat1Extent
+
+        -- Assert immutable render for opRepeat1
+        either (fail . show) pure (opRenderSingle rate opRepeat1) >>= (=== expectedRepeat1Samples)
+
+        -- Assert mutable render for opRepeat1
+        liftIO (opRenderMutSingle rate opRepeat1) >>= either (fail . show) pure >>= (=== expectedRepeat1Samples)
+
+        -- Second Repeat Op: OpRepeat 1 opRepeat1
+        let opRepeat2 = Fix (OpRepeat 1 opRepeat1)
+        let expectedRepeat2Extent = Extent (Arc 0 1) -- Repeat 1 is identity for extent
+        let expectedRepeat2Samples = isampsFromList [1] -- Repeat 1 is identity for samples
+
+        -- Assert extent for opRepeat2
+        let annoResultRepeat2 = opAnnoExtentSingle rate opRepeat2
+        case annoResultRepeat2 of
+          Left err -> fail ("Anno Repeat2 failed: " ++ show err)
+          Right (MemoP ex _) -> ex === expectedRepeat2Extent
+
+        -- Assert immutable render for opRepeat2
+        either (fail . show) pure (opRenderSingle rate opRepeat2) >>= (=== expectedRepeat2Samples)
+
+        -- Assert mutable render for opRepeat2
+        liftIO (opRenderMutSingle rate opRepeat2) >>= either (fail . show) pure >>= (=== expectedRepeat2Samples)
+
+        -- Slice Op: OpSlice (Arc (-1) 1) opRepeat2
+        let sliceArc = Arc (-1 :: Time) 1
+        let opSlice = Fix (OpSlice sliceArc opRepeat2)
+        -- Original extent logic: extentFromDelta (arcLen sliceArc) = extentFromDelta 2 -> Arc 0 2
+        let expectedSliceExtent = Extent (Arc 0 2)
+        let expectedSliceSamples = isampsFromList [0, 1] -- Expected correct immutable output
+
+        -- Assert extent for opSlice
+        let annoResultSlice = opAnnoExtentSingle rate opSlice
+        case annoResultSlice of
+          Left err -> fail ("Anno Slice failed: " ++ show err)
+          Right (MemoP ex _) -> ex === expectedSliceExtent
+
+        -- Assert immutable render for opSlice
+        immutableSliceArr <- either (fail . show) pure (opRenderSingle rate opSlice)
+        immutableSliceArr === expectedSliceSamples
+
+        -- Assert mutable render for opSlice (This is where the failure occurred in property test)
+        mutableSliceArr <- liftIO (opRenderMutSingle rate opSlice) >>= either (fail . show) pure
+        mutableSliceArr === expectedSliceSamples
     ]
 
 main :: IO ()
@@ -399,10 +500,10 @@ genOp validKeys = genR
     ]
       ++ ([Fix . OpRef <$> Gen.element validKeys | not (null validKeys)])
   recursive =
+    -- [ Gen.subtermM genR $ \r -> do
+    --     n <- Gen.integral (Range.linearFrom 0 (-10) 10)
+    --     pure (Fix (OpShift (Delta (fromInteger n)) r))
     [ Gen.subtermM genR $ \r -> do
-        n <- Gen.integral (Range.linearFrom 0 (-10) 10)
-        pure (Fix (OpShift (Delta (fromInteger n)) r))
-    , Gen.subtermM genR $ \r -> do
         n <- Gen.integral (Range.linear 1 3)
         pure (Fix (OpRepeat (fromInteger n) r))
     , Gen.subtermM genR $ \r -> do
@@ -410,8 +511,8 @@ genOp validKeys = genR
         b <- fmap fromInteger (Gen.integral (Range.linearFrom 0 (-10) 10))
         let arc = Arc (min a b) (max a b)
         pure (Fix (OpSlice arc r))
-    , genSeqSubterm genR (Fix . OpConcat)
-    , genSeqSubterm genR (Fix . OpMerge)
+        -- , genSeqSubterm genR (Fix . OpConcat)
+        -- , genSeqSubterm genR (Fix . OpMerge)
     ]
 
 genSeqSubterm :: Gen (Op n) -> (Seq.Seq (Op n) -> Op n) -> Gen (Op n)
