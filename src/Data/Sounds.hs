@@ -51,6 +51,7 @@ import Data.Sequence (Seq (..))
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Topo (SortErr (..), topoAnnoM, topoEval)
+import Data.Void (absurd)
 import Debug.Trace (trace)
 import Paths_octune (getDataFileName)
 import System.Directory (doesFileExist)
@@ -1007,14 +1008,14 @@ copyWithinMav (View (Arc mavS _) mavMutex) srcRelOffset destRelOffset copyLen =
 newtype MutSamples = MutSamples {runMutSamples :: Arc QTime -> MutArrayView Int32 -> PrimPar ()}
 
 -- | Run mutable samples to produce a primitive array.
-runMutSamplesSimple :: Rate -> MutSamples -> Arc QTime -> IO (PrimArray Int32)
+runMutSamplesSimple :: Rate -> MutSamples -> Arc QTime -> IO InternalSamples
 runMutSamplesSimple _rate samps arc = do
   let elemsLen = arcLen arc
   arr <- zeroPrimArray (fromIntegral elemsLen)
   runPrimPar $ do
     mav <- mavNew arr
     runMutSamples samps arc mav
-  unsafeFreezePrimArray arr
+  fmap InternalSamples (unsafeFreezePrimArray arr)
 
 -- | Create empty mutable samples.
 ormEmpty :: MutSamples
@@ -1262,6 +1263,10 @@ opRenderMut rate onRef = goTop
     OpMerge rs -> pure (ormMerge (fmap annoVal (toList rs)))
     OpRef n -> lift (onRef n)
 
+-- | Render multiple operations to mutable samples in topological order.
+opRenderMutTopo :: (Ord n) => Rate -> Map n (Memo (OpF n) Extent) -> Either (SortErr n) (Map n MutSamples)
+opRenderMutTopo rate m = fmap (fmap (either absurd id . runIdentity . runExceptT)) (topoEval opAnnoRefs m (opRenderMut rate))
+
 -- | Render an operation to mutable samples, handling references with Left.
 opRenderMutSingle :: Rate -> Op n -> IO (Either n InternalSamples)
 opRenderMutSingle rate op = runExceptT $ do
@@ -1271,5 +1276,4 @@ opRenderMutSingle rate op = runExceptT $ do
     Nothing -> pure isampsEmpty
     Just arc -> do
       let arc' = quantizeArc rate arc
-      arr <- liftIO (runMutSamplesSimple rate samps arc')
-      pure (InternalSamples arr)
+      liftIO (runMutSamplesSimple rate samps arc')

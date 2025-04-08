@@ -35,9 +35,11 @@ import Data.Sounds
   , opAnnoExtentSingle
   , opAnnoExtentTopo
   , opRenderMutSingle
+  , opRenderMutTopo
   , opRenderSingle
   , opRenderTopo
   , quantizeArc
+  , runMutSamplesSimple
   , unquantizeArc
   )
 import Data.Topo (SortErr, topoSort)
@@ -359,19 +361,21 @@ opTests lim =
             case sequence ans of
               Left n -> fail ("Missing key " ++ show n)
               Right ans' -> do
-                case opRenderTopo rate ans' of
-                  Left err -> liftIO (throwIO err)
-                  Right res -> do
-                    for_ (Map.toList res) $ \(k, samps) -> do
-                      let an = ans' Map.! k
-                          ex = memoKey an
-                      case extentPosArc ex of
-                        Nothing -> pure ()
-                        Just arc -> do
-                          let qArc = quantizeArc rate arc
-                              qLen = arcLen qArc
-                              arr = runSamples samps qArc
-                          fromIntegral (isampsLength arr) === qLen
+                renderRes <- either (liftIO . throwIO) pure (opRenderTopo rate ans')
+                renderMutRes <- either (liftIO . throwIO) pure (opRenderMutTopo rate ans')
+                for_ (Map.toList renderRes) $ \(k, samps) -> do
+                  let an = ans' Map.! k
+                      ex = memoKey an
+                      mutSamps = renderMutRes Map.! k
+                  case extentPosArc ex of
+                    Nothing -> pure ()
+                    Just arc -> do
+                      let qArc = quantizeArc rate arc
+                          qLen = arcLen qArc
+                          arr = runSamples samps qArc
+                      fromIntegral (isampsLength arr) === qLen
+                      marr <- liftIO (runMutSamplesSimple rate mutSamps qArc)
+                      marr === arr
     ]
 
 main :: IO ()
