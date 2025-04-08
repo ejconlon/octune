@@ -500,10 +500,10 @@ genOp validKeys = genR
     ]
       ++ ([Fix . OpRef <$> Gen.element validKeys | not (null validKeys)])
   recursive =
-    -- [ Gen.subtermM genR $ \r -> do
-    --     n <- Gen.integral (Range.linearFrom 0 (-10) 10)
-    --     pure (Fix (OpShift (Delta (fromInteger n)) r))
     [ Gen.subtermM genR $ \r -> do
+        n <- Gen.integral (Range.linearFrom 0 (-10) 10)
+        pure (Fix (OpShift (Delta (fromInteger n)) r))
+    , Gen.subtermM genR $ \r -> do
         n <- Gen.integral (Range.linear 1 3)
         pure (Fix (OpRepeat (fromInteger n) r))
     , Gen.subtermM genR $ \r -> do
@@ -511,8 +511,8 @@ genOp validKeys = genR
         b <- fmap fromInteger (Gen.integral (Range.linearFrom 0 (-10) 10))
         let arc = Arc (min a b) (max a b)
         pure (Fix (OpSlice arc r))
-        -- , genSeqSubterm genR (Fix . OpConcat)
-        -- , genSeqSubterm genR (Fix . OpMerge)
+    , genSeqSubterm genR (Fix . OpConcat)
+    , genSeqSubterm genR (Fix . OpMerge)
     ]
 
 genSeqSubterm :: Gen (Op n) -> (Seq.Seq (Op n) -> Op n) -> Gen (Op n)

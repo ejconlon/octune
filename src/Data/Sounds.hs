@@ -1090,20 +1090,25 @@ ormSamp isamps =
 ormSlice :: Rate -> Arc Time -> MutSamples -> MutSamples
 ormSlice rate sarc rsamp = MutSamples $ \arc mav -> do
   -- Calculate the relative overlap between the requested arc and the slice arc
-  case arcRelative (unquantizeArc rate arc) sarc of
+  let relResult = arcRelative (unquantizeArc rate arc) sarc
+  case relResult of
     Nothing -> pure () -- No overlap, do nothing to mav
-    Just (beforeU, arcU, _) -> do
+    Just (beforeU, arcU, _afterU) -> do
+      -- Ignore afterU
       let arcQ = quantizeArc rate arcU -- Arc to request from inner sampler
-          beforeQ = quantizeDelta rate beforeU -- Offset in the target view (relative start)
-
+          beforeQ = quantizeDelta rate beforeU -- Offset into the requested `arc` where sliced data starts
+      let writeLen = arcLen arcQ
       -- Check if the part we need to render has any length
-      when (arcLen arcQ > 0) $ do
-        -- Calculate the relative arc within mav where we need to write
-        let writeLen = arcLen arcQ -- Relative length
-            writeArc = arcFrom (fromIntegral beforeQ) writeLen
+      when (writeLen > 0) $ do
+        -- Calculate the relative arc within mav where we need to write.
+        -- `mav` represents the buffer for the requested `arc`.
+        -- The data starts `beforeQ` into this buffer.
+        let relativeWriteArc = arcFrom (QTime (unQDelta beforeQ)) writeLen
 
-        -- Narrow the target view to this specific arc
-        for_ (mavNarrow writeArc mav) $ \mavN -> do
+        -- Narrow the target view to this specific relative arc
+        let mavNarrowed = mavNarrow relativeWriteArc mav
+
+        for_ mavNarrowed $ \mavN -> do
           -- Run the inner sampler for its corresponding quantized arc, writing into the narrowed view
           runMutSamples rsamp arcQ mavN
 
@@ -1195,7 +1200,9 @@ ormRepeat rate reps childExtent childSamp =
               then ormEmpty -- Repetition length is zero or negative
               else MutSamples $ \targetArcQ mav -> do
                 let targetArcU = unquantizeArc rate targetArcQ
-                case arcDeltaCoverMax repLenU reps targetArcU of
+                let coverResult = arcDeltaCoverMax repLenU reps targetArcU
+
+                case coverResult of
                   Nothing -> pure () -- No overlap
                   Just (paddingBeforeU, firstN, cappedN, _paddingAfterU) -> do
                     -- Quantized padding at the start *within* the targetArcQ
@@ -1231,53 +1238,63 @@ ormRepeat rate reps childExtent childSamp =
                           numFullReps = max 0 (numTotalReps - numPartials)
 
                       -- Iterate and render directly into mav
-                      let initialOffsetQ = addDelta (arcStart (viewBounds mav)) prePaddingQ
-                      currentWriteOffsetRef :: PrimVar (PrimState PrimPar) Int <- newPrimVar (fromInteger (unQTime initialOffsetQ))
+                      -- Note: mav's bounds are relative to the *requested* targetArcQ.
+                      -- Offsets calculated here need to be relative to mav's bounds start.
+                      let mavStartOffset = arcStart (viewBounds mav)
+                          initialWritePos = addDelta mavStartOffset prePaddingQ
+
+                      currentWritePosRef :: PrimVar (PrimState PrimPar) Int <- newPrimVar (fromInteger (unQTime initialWritePos))
 
                       -- Helper to read QTime from PrimVar Int
-                      let readOffset :: PrimPar QTime
-                          readOffset = QTime . fromIntegral <$> readPrimVar currentWriteOffsetRef
+                      let readWritePos :: PrimPar QTime
+                          readWritePos = QTime . fromIntegral <$> readPrimVar currentWritePosRef
                       -- Helper to write QTime to PrimVar Int
-                      let writeOffset :: QTime -> PrimPar ()
-                          writeOffset qtime = writePrimVar currentWriteOffsetRef (fromInteger (unQTime qtime))
+                      let writeWritePos :: QTime -> PrimPar ()
+                          writeWritePos qtime = writePrimVar currentWritePosRef (fromInteger (unQTime qtime))
 
                       -- 1. Render first partial repetition
                       when isFirstPartial $ for_ mFirstRelArcQ $ \firstRelQ -> do
                         let len = arcLen firstRelQ
                         when (len > 0) $ do
-                          offset <- readOffset
-                          let targetWriteArc = arcFrom offset len
-                          for_ (mavNarrow targetWriteArc mav) (runMutSamples childSamp firstRelQ)
-                          writeOffset (addDelta offset len)
+                          currentPos <- readWritePos
+                          -- The target arc must be relative to mav's bounds start
+                          let relativeTargetArc = arcFrom (currentPos - mavStartOffset) len
+                          for_ (mavNarrow relativeTargetArc mav) $ \mavN ->
+                            runMutSamples childSamp firstRelQ mavN
+                          writeWritePos (addDelta currentPos len)
 
                       -- 2. Render full repetitions
                       when (numFullReps > 0 && arcLen fullRepArcQ > 0) $ do
                         let fullLen = arcLen fullRepArcQ
-                        -- Render the *first* full repetition
-                        firstFullRepOffset <- readOffset
-                        let firstTargetWriteArc = arcFrom firstFullRepOffset fullLen
-                        for_ (mavNarrow firstTargetWriteArc mav) (runMutSamples childSamp fullRepArcQ)
-                        let offsetAfterFirst = addDelta firstFullRepOffset fullLen
-                        writeOffset offsetAfterFirst
+                        firstFullRepPos <- readWritePos
+                        -- The target arc must be relative to mav's bounds start
+                        let firstRelativeTargetArc = arcFrom (firstFullRepPos - mavStartOffset) fullLen
+                        for_ (mavNarrow firstRelativeTargetArc mav) $ \mavN ->
+                          runMutSamples childSamp fullRepArcQ mavN
+                        let posAfterFirst = addDelta firstFullRepPos fullLen
+                        writeWritePos posAfterFirst
 
                         -- Copy for the remaining full repetitions
                         when (numFullReps > 1) $ do
+                          -- copyWithinMav takes absolute offsets into the underlying array
+                          let firstFullRepAbsOffset = firstFullRepPos -- Since mavStartOffset is already included
                           for_ [1 .. numFullReps - 1] $ \_ -> do
-                            currentOffset <- readOffset
-                            -- Copy from firstFullRepOffset to currentOffset
-                            copyWithinMav mav firstFullRepOffset currentOffset fullLen
-                            -- Update offset after copy
-                            let nextOffsetAfterCopy = addDelta currentOffset fullLen
-                            writeOffset nextOffsetAfterCopy
+                            currentPos <- readWritePos
+                            let currentAbsOffset = currentPos
+                            copyWithinMav mav firstFullRepAbsOffset currentAbsOffset fullLen
+                            let nextPosAfterCopy = addDelta currentPos fullLen
+                            writeWritePos nextPosAfterCopy
 
                       -- 3. Render last partial repetition
                       when isLastPartial $ for_ mLastRelArcQ $ \lastRelQ -> do
                         let len = arcLen lastRelQ
                         when (len > 0) $ do
-                          offset <- readOffset
-                          let targetWriteArc = arcFrom offset len
-                          for_ (mavNarrow targetWriteArc mav) (runMutSamples childSamp lastRelQ)
-                          writeOffset (addDelta offset len)
+                          currentPos <- readWritePos
+                          -- The target arc must be relative to mav's bounds start
+                          let relativeTargetArc = arcFrom (currentPos - mavStartOffset) len
+                          for_ (mavNarrow relativeTargetArc mav) $ \mavN ->
+                            runMutSamples childSamp lastRelQ mavN
+                          writeWritePos (addDelta currentPos len)
 
 -- | Render an operation to mutable samples.
 opRenderMut
