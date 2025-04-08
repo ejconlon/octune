@@ -1276,12 +1276,12 @@ ormRepeat rate reps childExtent childSamp =
 
                         -- Copy for the remaining full repetitions
                         when (numFullReps > 1) $ do
-                          -- copyWithinMav takes absolute offsets into the underlying array
-                          let firstFullRepAbsOffset = firstFullRepPos -- Since mavStartOffset is already included
+                          -- copyWithinMav expects offsets relative to the start of the MutArrayView
+                          let firstFullRepRelOffset = firstFullRepPos - mavStartOffset
                           for_ [1 .. numFullReps - 1] $ \_ -> do
                             currentPos <- readWritePos
-                            let currentAbsOffset = currentPos
-                            copyWithinMav mav firstFullRepAbsOffset currentAbsOffset fullLen
+                            let currentRelOffset = currentPos - mavStartOffset
+                            copyWithinMav mav firstFullRepRelOffset currentRelOffset fullLen
                             let nextPosAfterCopy = addDelta currentPos fullLen
                             writeWritePos nextPosAfterCopy
 
