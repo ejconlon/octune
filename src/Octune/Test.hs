@@ -276,6 +276,7 @@ opTests lim =
           === Right (MemoP (Extent (Arc (-2) 1)) (OpShift (Delta 2) (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
         let expected = Right (isampsFromList [3])
         opRenderSingle (Rate 1) op === expected
+        liftIO (opRenderMutSingle (Rate 1) op) >>= (=== expected)
     , testUnit "OpShift negative" $ do
         let inSamps = isampsFromList [1, 2, 3]
             inner = Fix (OpSamp inSamps :: TestOpF)
@@ -284,6 +285,7 @@ opTests lim =
           === Right (MemoP (Extent (Arc 2 5)) (OpShift (Delta (-2)) (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
         let expected = Right (isampsFromList [0, 0, 1, 2, 3])
         opRenderSingle (Rate 1) op === expected
+        liftIO (opRenderMutSingle (Rate 1) op) >>= (=== expected)
     , testUnit "OpSlice" $ do
         let inSamps = isampsFromList [1, 2, 3, 4, 5, 6]
             inner = Fix (OpSamp inSamps :: TestOpF)

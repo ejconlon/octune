@@ -1011,12 +1011,34 @@ ormEmpty = MutSamples (\_ _ -> pure ())
 
 -- | Create mutable samples from constant samples.
 ormSamp :: InternalSamples -> MutSamples
-ormSamp x =
-  let src = avNew (unInternalSamples x)
-  in  if viewNull src
+ormSamp isamps =
+  let srcArr = unInternalSamples isamps
+      srcLen = sizeofPrimArray srcArr -- Length in elements (QDelta)
+  in  if srcLen == 0
         then ormEmpty
-        else MutSamples $ \arc mav ->
-          for_ (viewNarrow arc src) (mavCopy mav)
+        else MutSamples $ \(Arc s e) (View (Arc mavS _) mavMutex) -> do
+          let i = QTime (fromIntegral srcLen) -- Source length as QTime
+
+              -- Determine the valid range of the requested arc clamped to the source bounds [0, i)
+              s' = max 0 s -- Clamp start to 0
+              e' = min i e -- Clamp end to i
+              copyLen = e' - s' -- Length of the valid segment to copy
+
+          -- Only proceed if there's overlap
+          when (copyLen > 0) $ do
+            -- Offset within the source array to start reading from
+            let srcOffset = s' -- Start reading from the clamped start index
+
+            -- Offset within the *requested arc* where the valid data starts.
+            -- This tells us where in the target view (mav) to start writing.
+            let arcValidDataOffset = s' - s -- Always >= 0
+
+            -- Absolute offset within the *target mav's underlying array* to start writing to
+            let mavTargetOffset = mavS + arcValidDataOffset
+
+            -- Perform the copy using calculated offsets and length
+            withMutex mavMutex $ \marr ->
+              copyPrimArray marr (fromIntegral mavTargetOffset) srcArr (fromIntegral srcOffset) (fromIntegral copyLen)
 
 -- | Create mutable samples that slice another generator.
 ormSlice :: Rate -> Arc Time -> MutSamples -> MutSamples
@@ -1039,6 +1061,13 @@ ormSlice rate sarc rsamp = MutSamples $ \arc mav -> do
           -- Run the inner sampler for its corresponding quantized arc, writing into the narrowed view
           runMutSamples rsamp arcQ mavN
 
+-- | Create mutable samples that shift another generator in time.
+ormShift :: Rate -> Delta -> MutSamples -> MutSamples
+ormShift rate c rsamp = MutSamples $ \arc mav ->
+  let shiftedArcU = arcShift (unquantizeArc rate arc) c
+      shiftedArcQ = quantizeArc rate shiftedArcU
+  in  runMutSamples rsamp shiftedArcQ mav
+
 -- | Render an operation to mutable samples.
 opRenderMut
   :: forall e m n. (Monad m) => Rate -> (n -> ExceptT e m MutSamples) -> Memo (OpF n) Extent -> ExceptT e m MutSamples
@@ -1052,7 +1081,7 @@ opRenderMut rate onRef = goTop
     OpSamp x -> pure (ormSamp x)
     OpRepeat _n _r -> error "TODO"
     OpSlice a r -> pure (ormSlice rate a (annoVal r))
-    OpShift _c _r -> error "TODO"
+    OpShift c r -> pure (ormShift rate c (annoVal r))
     OpConcat _rs -> error "TODO"
     OpMerge _rs -> error "TODO"
     OpRef n -> lift (onRef n)
