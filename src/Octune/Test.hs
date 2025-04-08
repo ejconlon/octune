@@ -320,6 +320,7 @@ opTests lim =
             )
         let expected = Right (isampsFromList [1, 2, 3, 4, 5, 6])
         opRenderSingle (Rate 1) op === expected
+        liftIO (opRenderMutSingle (Rate 1) op) >>= (=== expected)
     , testUnit "OpMerge" $ do
         let inSamps1 = isampsFromList [1, 2]
             inSamps2 = isampsFromList [4, 5, 6]
@@ -338,6 +339,7 @@ opTests lim =
             )
         let expected = Right (isampsFromList [5, 7, 6])
         opRenderSingle (Rate 1) op === expected
+        liftIO (opRenderMutSingle (Rate 1) op) >>= (=== expected)
     , testUnit "OpRef" $ do
         let op = Fix (OpRef 'a' :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Left 'a'

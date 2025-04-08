@@ -1068,6 +1068,73 @@ ormShift rate c rsamp = MutSamples $ \arc mav ->
       shiftedArcQ = quantizeArc rate shiftedArcU
   in  runMutSamples rsamp shiftedArcQ mav
 
+-- | Create mutable samples that concatenate multiple generators.
+ormConcat :: Rate -> Seq (Anno Extent MutSamples) -> MutSamples
+ormConcat rate rsampsAn =
+  -- Precompute offsets and arcs for sub-samplers, similar to orConcat
+  let gather dta@(d, t, a) anno@(Anno l _g) =
+        let q = quantizeDelta rate (extentLen l)
+        in  if q <= 0
+              then dta
+              else
+                let d' = d + q
+                    tU = extentLen l -- Unquantized length for time calculation
+                    t' = addDelta t tU
+                in  (d', t', a :|> (d, anno)) -- Store QDelta start and the whole Anno
+      (_, _, subItems) = foldl' gather (0, Time 0, Empty) rsampsAn
+      -- Calculate the total quantized length
+      totalLenQ = getSum $ foldMap (Sum . quantizeDelta rate . extentLen . annoKey) rsampsAn
+      wholeQ = arcFrom (QTime 0) totalLenQ -- Arc QTime
+  in  MutSamples $ \targetArcQ mav ->
+        -- Check overlap between the requested target arc and the total extent
+        case arcOverlap targetArcQ wholeQ of
+          OverlapLt -> pure () -- Request is entirely before the concatenation
+          OverlapGt -> pure () -- Request is entirely after the concatenation
+          OverlapOn _ overlapArcQ _ ->
+            -- Iterate through the sub-samplers
+            for_ subItems $ \(subStartQ, subAnno) -> do
+              let subExtent = annoKey subAnno
+                  subSampler = annoVal subAnno
+                  subLenQ = quantizeDelta rate (extentLen subExtent)
+                  subArcQ = arcFrom (QTime (unQDelta subStartQ)) subLenQ -- Arc QTime
+
+              -- Find the intersection between the overall overlap arc and this sub-sampler's arc
+              case arcIntersect overlapArcQ subArcQ of
+                Nothing -> pure () -- This sub-sampler doesn't overlap the required section
+                Just intersectArcQ ->
+                  -- Calculate the arc relative to the sub-sampler's start time
+                  let subRelativeArcQ = arcShift intersectArcQ (negate subStartQ)
+                      -- Calculate the arc relative to the target mav's start time
+                      targetRelativeOffset = arcStart intersectArcQ - arcStart targetArcQ
+                      targetRelativeArcQ = arcFrom targetRelativeOffset (arcLen intersectArcQ)
+                  in  -- Narrow the target view and run the sub-sampler
+                      for_ (mavNarrow targetRelativeArcQ mav) $ \mavN ->
+                        runMutSamples subSampler subRelativeArcQ mavN
+
+-- | Create mutable samples that merge multiple generators by mixing their samples.
+ormMerge :: [MutSamples] -> MutSamples
+ormMerge childSamps =
+  if null childSamps
+    then ormEmpty
+    else MutSamples $ \requestedArcQ mav -> do
+      let mavBounds = viewBounds mav
+          mavLen = arcLen mavBounds
+          mavStart = arcStart mavBounds
+
+      when (mavLen > 0) $ do
+        -- Iterate through child samplers
+        for_ childSamps $ \childSamp -> do
+          -- Create a temporary buffer for the child's output
+          tempArr <- zeroPrimArray (fromIntegral mavLen)
+          tempMav <- mavNew tempArr -- Has bounds Arc 0 mavLen
+
+          -- Run the child sampler into the temporary buffer
+          runMutSamples childSamp requestedArcQ tempMav
+
+          -- Merge the temporary buffer into the main target view
+          withMutex (viewArray mav) $ \targetArr ->
+            mergeMutableIntoPrimArray (+) targetArr (fromIntegral mavStart) tempArr 0 (fromIntegral mavLen)
+
 -- | Render an operation to mutable samples.
 opRenderMut
   :: forall e m n. (Monad m) => Rate -> (n -> ExceptT e m MutSamples) -> Memo (OpF n) Extent -> ExceptT e m MutSamples
@@ -1082,8 +1149,8 @@ opRenderMut rate onRef = goTop
     OpRepeat _n _r -> error "TODO"
     OpSlice a r -> pure (ormSlice rate a (annoVal r))
     OpShift c r -> pure (ormShift rate c (annoVal r))
-    OpConcat _rs -> error "TODO"
-    OpMerge _rs -> error "TODO"
+    OpConcat rs -> pure (ormConcat rate rs)
+    OpMerge rs -> pure (ormMerge (fmap annoVal (toList rs)))
     OpRef n -> lift (onRef n)
 
 -- | Render an operation to mutable samples, handling references with Left.
