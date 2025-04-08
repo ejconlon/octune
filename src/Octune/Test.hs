@@ -302,6 +302,7 @@ opTests lim =
           === Right (MemoP (Extent (Arc 0 6)) (OpRepeat 2 (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
         let expected = Right (isampsFromList [1, 2, 3, 1, 2, 3])
         opRenderSingle (Rate 1) op === expected
+        liftIO (opRenderMutSingle (Rate 1) op) >>= (=== expected)
     , testUnit "OpConcat" $ do
         let inSamps1 = isampsFromList [1, 2, 3]
             inSamps2 = isampsFromList [4, 5, 6]

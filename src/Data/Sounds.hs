@@ -42,6 +42,7 @@ import Data.Primitive.PrimArray
   , unsafeFreezePrimArray
   , writePrimArray
   )
+import Data.Primitive.PrimVar (PrimVar, newPrimVar, readPrimVar, writePrimVar)
 import Data.Primitive.Types (Prim)
 import Data.STRef.Strict (newSTRef, readSTRef, writeSTRef)
 import Data.Semigroup (Max (..), Sum (..))
@@ -1135,6 +1136,93 @@ ormMerge childSamps =
           withMutex (viewArray mav) $ \targetArr ->
             mergeMutableIntoPrimArray (+) targetArr (fromIntegral mavStart) tempArr 0 (fromIntegral mavLen)
 
+-- | Create mutable samples that repeat another generator.
+ormRepeat :: Rate -> Reps -> Extent -> MutSamples -> MutSamples
+ormRepeat rate reps childExtent childSamp =
+  if reps <= 0
+    then ormEmpty
+    else case extentPosArc childExtent of
+      Nothing -> ormEmpty -- Child has no positive extent
+      Just childArcU ->
+        let repLenU = arcLen childArcU
+            repLenQ = quantizeDelta rate repLenU
+        in  if repLenU <= 0 || repLenQ <= 0
+              then ormEmpty -- Repetition length is zero or negative
+              else MutSamples $ \targetArcQ mav -> do
+                let targetArcU = unquantizeArc rate targetArcQ
+                case arcDeltaCoverMax repLenU reps targetArcU of
+                  Nothing -> pure () -- No overlap
+                  Just (paddingBeforeU, firstN, cappedN, _paddingAfterU) -> do
+                    -- Quantized padding at the start *within* the targetArcQ
+                    let prePaddingQ = quantizeDelta rate paddingBeforeU
+                        numTotalReps = cappedN - firstN
+
+                    when (numTotalReps > 0) $ do
+                      -- Calculate indices and repetition arcs
+                      let firstRepIdx = firstN
+                          lastRepIdx = cappedN - 1
+                          fullRepArcU = arcFrom (Time 0) repLenU -- Relative arc for a full repetition
+                          fullRepArcQ = quantizeArc rate fullRepArcU
+
+                      -- Determine if first/last reps are partial
+                      let firstRepStartDeltaU = fromIntegral firstRepIdx * repLenU
+                          firstRepStartU = addDelta (Time 0) firstRepStartDeltaU
+                          firstRepArcU = arcFrom firstRepStartU repLenU
+                          mFirstIntersectU = arcIntersect targetArcU firstRepArcU
+                          mFirstRelArcU = arcShift <$> mFirstIntersectU <*> pure (negate firstRepStartDeltaU)
+                          mFirstRelArcQ = quantizeArc rate <$> mFirstRelArcU
+                          isFirstPartial = maybe False (\qArc -> arcLen qArc < repLenQ) mFirstRelArcQ
+
+                      let lastRepStartDeltaU = fromIntegral lastRepIdx * repLenU
+                          lastRepStartU = addDelta (Time 0) lastRepStartDeltaU
+                          lastRepArcU = arcFrom lastRepStartU repLenU
+                          mLastIntersectU = arcIntersect targetArcU lastRepArcU
+                          mLastRelArcU = arcShift <$> mLastIntersectU <*> pure (negate lastRepStartDeltaU)
+                          mLastRelArcQ = quantizeArc rate <$> mLastRelArcU
+                          isLastPartial = firstRepIdx /= lastRepIdx && maybe False (\qArc -> arcLen qArc < repLenQ) mLastRelArcQ
+
+                      -- Calculate number of full repetitions
+                      let numPartials = (if isFirstPartial then 1 else 0) + (if isLastPartial then 1 else 0)
+                          numFullReps = max 0 (numTotalReps - numPartials)
+
+                      -- Iterate and render directly into mav
+                      let initialOffsetQ = addDelta (arcStart (viewBounds mav)) prePaddingQ
+                      currentWriteOffsetRef :: PrimVar (PrimState PrimPar) Int <- newPrimVar (fromInteger (unQTime initialOffsetQ))
+
+                      -- Helper to read QTime from PrimVar Int
+                      let readOffset :: PrimPar QTime
+                          readOffset = QTime . fromIntegral <$> readPrimVar currentWriteOffsetRef
+                      -- Helper to write QTime to PrimVar Int
+                      let writeOffset :: QTime -> PrimPar ()
+                          writeOffset qtime = writePrimVar currentWriteOffsetRef (fromInteger (unQTime qtime))
+
+                      -- 1. Render first partial repetition
+                      when isFirstPartial $ for_ mFirstRelArcQ $ \firstRelQ -> do
+                        let len = arcLen firstRelQ
+                        when (len > 0) $ do
+                          offset <- readOffset
+                          let targetWriteArc = arcFrom offset len
+                          for_ (mavNarrow targetWriteArc mav) (runMutSamples childSamp firstRelQ)
+                          writeOffset (addDelta offset len)
+
+                      -- 2. Render full repetitions
+                      when (numFullReps > 0 && arcLen fullRepArcQ > 0) $ do
+                        let fullLen = arcLen fullRepArcQ
+                        for_ [1 .. numFullReps] $ \_ -> do
+                          offset <- readOffset
+                          let targetWriteArc = arcFrom offset fullLen
+                          for_ (mavNarrow targetWriteArc mav) (runMutSamples childSamp fullRepArcQ)
+                          writeOffset (addDelta offset fullLen)
+
+                      -- 3. Render last partial repetition
+                      when isLastPartial $ for_ mLastRelArcQ $ \lastRelQ -> do
+                        let len = arcLen lastRelQ
+                        when (len > 0) $ do
+                          offset <- readOffset
+                          let targetWriteArc = arcFrom offset len
+                          for_ (mavNarrow targetWriteArc mav) (runMutSamples childSamp lastRelQ)
+                          writeOffset (addDelta offset len)
+
 -- | Render an operation to mutable samples.
 opRenderMut
   :: forall e m n. (Monad m) => Rate -> (n -> ExceptT e m MutSamples) -> Memo (OpF n) Extent -> ExceptT e m MutSamples
@@ -1146,7 +1234,7 @@ opRenderMut rate onRef = goTop
   go = \case
     OpEmpty -> pure ormEmpty
     OpSamp x -> pure (ormSamp x)
-    OpRepeat _n _r -> error "TODO"
+    OpRepeat n r -> pure (ormRepeat rate n (annoKey r) (annoVal r))
     OpSlice a r -> pure (ormSlice rate a (annoVal r))
     OpShift c r -> pure (ormShift rate c (annoVal r))
     OpConcat rs -> pure (ormConcat rate rs)
