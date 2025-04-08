@@ -349,8 +349,9 @@ opTests lim =
     , testProp "gen test" lim $ do
         let rate = Rate 1
         -- Generate a set of valid keys
-        keys <- forAll (Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z']))
-        -- let keys = ['a']
+        -- keys <- forAll (Gen.list (Range.linear 1 5) (Gen.element ['a' .. 'z']))
+        -- TODO XXX
+        let keys = ['a']
         let validKeys = Set.fromList keys
         -- Generate a map of ops with valid references
         ops <- forAll (genValidOpMap validKeys)

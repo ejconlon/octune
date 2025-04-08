@@ -387,6 +387,9 @@ newtype Rate = Rate {unRate :: Rational}
   deriving newtype (Num, Ord, Enum, Real, Fractional, RealFrac)
 
 -- | Convert a continuous time arc to a discrete arc.
+-- Note that it is not possible to meaningfully convert
+-- individual time points back and forth because we
+-- choose to make delta quantization shift-invariant.
 quantizeArc :: Rate -> Arc Time -> Arc QTime
 quantizeArc (Rate r) (Arc (Time s) (Time e)) =
   let qstart = floor (s * r)
@@ -397,6 +400,7 @@ quantizeArc (Rate r) (Arc (Time s) (Time e)) =
               qend = qstart + qlen
           in  Arc qstart qend
 
+-- | Convert a continuous time delta to a quantized delta.
 quantizeDelta :: Rate -> Delta -> QDelta
 quantizeDelta (Rate r) (Delta d) = QDelta (ceiling (d * r))
 
@@ -404,6 +408,7 @@ quantizeDelta (Rate r) (Delta d) = QDelta (ceiling (d * r))
 unquantizeArc :: Rate -> Arc QTime -> Arc Time
 unquantizeArc (Rate r) (Arc (QTime s) (QTime e)) = Arc (Time (fromIntegral s / r)) (Time (fromIntegral e / r))
 
+-- | Convert a quantized delta to a continuous time delta.
 unquantizeDelta :: Rate -> QDelta -> Delta
 unquantizeDelta (Rate r) (QDelta d) = Delta (fromIntegral d / r)
 
@@ -412,6 +417,7 @@ newtype Reps = Reps {unReps :: Rational}
   deriving stock (Eq, Show)
   deriving newtype (Num, Ord, Enum, Real, Fractional, RealFrac)
 
+-- | Multiply a number of repetitions by a delta.
 mulReps :: Reps -> Delta -> Delta
 mulReps (Reps n) d = fromRational n * d
 
