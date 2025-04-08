@@ -10,6 +10,7 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Identity (Identity (..), runIdentity)
 import Control.Monad.Primitive (PrimMonad (..), PrimState, RealWorld)
 import Control.Monad.Reader (ReaderT (..))
+import Control.Monad.ST.Strict (ST, stToIO)
 import Control.Monad.Trans (lift)
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
@@ -20,7 +21,6 @@ import Data.Foldable (fold, foldl', for_, toList)
 import Data.Functor.Foldable (Recursive (..), cata)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
-import Data.PrimPar (Mutex, ParMonad, PrimPar, newMutex, runPrimPar, withMutex)
 import Data.Primitive.ByteArray (ByteArray (..))
 import Data.Primitive.PrimArray
   ( MutablePrimArray
@@ -45,7 +45,7 @@ import Data.Primitive.PrimArray
   )
 import Data.Primitive.PrimVar (PrimVar, newPrimVar, readPrimVar, writePrimVar)
 import Data.Primitive.Types (Prim)
-import Data.STRef.Strict (newSTRef, readSTRef, writeSTRef)
+import Data.STRef.Strict (STRef, newSTRef, readSTRef, writeSTRef)
 import Data.Semigroup (Max (..), Sum (..))
 import Data.Sequence (Seq (..))
 import Data.Set (Set)
@@ -60,6 +60,20 @@ import System.IO.Unsafe (unsafePerformIO)
 -- | A utility function for debugging that traces a list of strings.
 traceAll :: [[String]] -> a -> a
 traceAll xs = if False then id else trace ("\n<==\n" ++ unlines (fmap (("* " ++) . unwords) xs) ++ "==>\n")
+
+-- Fake API for PrimPar
+
+type Mutex = STRef RealWorld
+
+type ParMonad m = (m ~ ST RealWorld)
+
+type PrimPar = ST RealWorld
+
+newMutex :: (ParMonad m) => a -> m (Mutex a)
+newMutex = newSTRef
+
+withMutex :: (ParMonad m) => Mutex a -> (a -> m b) -> m b
+withMutex ref f = readSTRef ref >>= f
 
 -- Bowtie utils
 
@@ -995,12 +1009,13 @@ mavCopy (View darc@(Arc dstart _) darr) (View sarc@(Arc sstart _) sarr) = do
       len = min slen dlen
   withMutex darr $ \marr -> do
     mlen <- getSizeofMutablePrimArray marr
-    let bad = len <= 0
-          || dstart < 0
-          || sstart < 0
-          || fromIntegral dlen > mlen
-          || fromIntegral dstart + fromIntegral len > dlen
-          || fromIntegral sstart + fromIntegral len > slen
+    let bad =
+          len <= 0
+            || dstart < 0
+            || sstart < 0
+            || fromIntegral dlen > mlen
+            || fromIntegral dstart + fromIntegral len > dlen
+            || fromIntegral sstart + fromIntegral len > slen
     if bad
       then error "mavCopy: out of bounds"
       else copyPrimArray marr (fromIntegral dstart) sarr (fromIntegral sstart) (fromIntegral len)
@@ -1013,12 +1028,13 @@ copyWithinMav (View darc@(Arc mavS _) mavMutex) srcRelOffset destRelOffset copyL
       destAbsOffset = mavS + destRelOffset
   withMutex mavMutex $ \marr -> do
     mlen <- getSizeofMutablePrimArray marr
-    let bad = copyLen <= 0
-          || srcAbsOffset < 0
-          || destAbsOffset < 0
-          || fromIntegral dlen > mlen
-          || fromIntegral srcAbsOffset + fromIntegral copyLen > mlen
-          || fromIntegral destAbsOffset + fromIntegral copyLen > mlen
+    let bad =
+          copyLen <= 0
+            || srcAbsOffset < 0
+            || destAbsOffset < 0
+            || fromIntegral dlen > mlen
+            || fromIntegral srcAbsOffset + fromIntegral copyLen > mlen
+            || fromIntegral destAbsOffset + fromIntegral copyLen > mlen
     if bad
       then error "copyWithinMav: out of bounds"
       else copyMutablePrimArray marr (fromIntegral destAbsOffset) marr (fromIntegral srcAbsOffset) (fromIntegral copyLen)
@@ -1028,12 +1044,11 @@ newtype MutSamples = MutSamples {runMutSamples :: Arc QTime -> MutArrayView Int3
 
 -- | Run mutable samples to produce a primitive array.
 runMutSamplesSimple :: Rate -> MutSamples -> Arc QTime -> IO InternalSamples
-runMutSamplesSimple _rate samps arc = do
+runMutSamplesSimple _rate samps arc = stToIO $ do
   let elemsLen = arcLen arc
   arr <- zeroPrimArray (fromIntegral elemsLen)
-  runPrimPar $ do
-    mav <- mavNew arr
-    runMutSamples samps arc mav
+  mav <- mavNew arr
+  runMutSamples samps arc mav
   fmap InternalSamples (unsafeFreezePrimArray arr)
 
 -- | Create empty mutable samples.
