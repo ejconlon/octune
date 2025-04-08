@@ -258,41 +258,47 @@ opTests lim =
     [ testUnit "OpEmpty" $ do
         let op = Fix (OpEmpty :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 0 0)) OpEmpty)
-        opRenderSingle (Rate 1) op === Right isampsEmpty
-        liftIO (opRenderMutSingle (Rate 1) op) >>= (=== Right isampsEmpty)
+        let expected = Right isampsEmpty
+        opRenderSingle (Rate 1) op === expected
+        liftIO (opRenderMutSingle (Rate 1) op) >>= (=== expected)
     , testUnit "OpSamp" $ do
         let inSamps = isampsFromList [1, 2, 3]
             op = Fix (OpSamp inSamps :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Right (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))
-        opRenderSingle (Rate 1) op === Right inSamps
-        liftIO (opRenderMutSingle (Rate 1) op) >>= (=== Right inSamps)
+        let expected = Right inSamps
+        opRenderSingle (Rate 1) op === expected
+        liftIO (opRenderMutSingle (Rate 1) op) >>= (=== expected)
     , testUnit "OpShift" $ do
         let inSamps = isampsFromList [1, 2, 3]
             inner = Fix (OpSamp inSamps :: TestOpF)
             op = Fix (OpShift (Delta 2) inner :: TestOpF)
         opAnnoExtentSingle (Rate 1) op
           === Right (MemoP (Extent (Arc (-2) 1)) (OpShift (Delta 2) (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
-        opRenderSingle (Rate 1) op === Right (isampsFromList [3])
+        let expected = Right (isampsFromList [3])
+        opRenderSingle (Rate 1) op === expected
     , testUnit "OpShift negative" $ do
         let inSamps = isampsFromList [1, 2, 3]
             inner = Fix (OpSamp inSamps :: TestOpF)
             op = Fix (OpShift (Delta (-2)) inner :: TestOpF)
         opAnnoExtentSingle (Rate 1) op
           === Right (MemoP (Extent (Arc 2 5)) (OpShift (Delta (-2)) (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
-        opRenderSingle (Rate 1) op === Right (isampsFromList [0, 0, 1, 2, 3])
+        let expected = Right (isampsFromList [0, 0, 1, 2, 3])
+        opRenderSingle (Rate 1) op === expected
     , testUnit "OpSlice" $ do
         let inSamps = isampsFromList [1, 2, 3, 4, 5, 6]
             inner = Fix (OpSamp inSamps :: TestOpF)
             op = Fix (OpSlice (Arc 1 3) inner :: TestOpF)
         opAnnoExtentSingle (Rate 1) op
           === Right (MemoP (Extent (Arc 0 2)) (OpSlice (Arc 1 3) (MemoP (Extent (Arc 0 6)) (OpSamp inSamps))))
-        opRenderSingle (Rate 1) op === Right (isampsFromList [2, 3])
+        let expected = Right (isampsFromList [2, 3])
+        opRenderSingle (Rate 1) op === expected
     , testUnit "OpRepeat" $ do
         let inSamps = isampsFromList [1, 2, 3]
             op = Fix (OpRepeat 2 (Fix (OpSamp inSamps)) :: TestOpF)
         opAnnoExtentSingle (Rate 1) op
           === Right (MemoP (Extent (Arc 0 6)) (OpRepeat 2 (MemoP (Extent (Arc 0 3)) (OpSamp inSamps))))
-        opRenderSingle (Rate 1) op === Right (isampsFromList [1, 2, 3, 1, 2, 3])
+        let expected = Right (isampsFromList [1, 2, 3, 1, 2, 3])
+        opRenderSingle (Rate 1) op === expected
     , testUnit "OpConcat" $ do
         let inSamps1 = isampsFromList [1, 2, 3]
             inSamps2 = isampsFromList [4, 5, 6]
@@ -309,7 +315,8 @@ opTests lim =
                     )
                 )
             )
-        opRenderSingle (Rate 1) op === Right (isampsFromList [1, 2, 3, 4, 5, 6])
+        let expected = Right (isampsFromList [1, 2, 3, 4, 5, 6])
+        opRenderSingle (Rate 1) op === expected
     , testUnit "OpMerge" $ do
         let inSamps1 = isampsFromList [1, 2]
             inSamps2 = isampsFromList [4, 5, 6]
@@ -326,7 +333,8 @@ opTests lim =
                     )
                 )
             )
-        opRenderSingle (Rate 1) op === Right (isampsFromList [5, 7, 6])
+        let expected = Right (isampsFromList [5, 7, 6])
+        opRenderSingle (Rate 1) op === expected
     , testUnit "OpRef" $ do
         let op = Fix (OpRef 'a' :: TestOpF)
         opAnnoExtentSingle (Rate 1) op === Left 'a'
