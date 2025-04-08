@@ -958,9 +958,13 @@ viewNull = arcNull . viewBounds
 viewSkip :: QDelta -> View z -> Maybe (View z)
 viewSkip skip (View bounds arr) = fmap (`View` arr) (arcSkip skip bounds)
 
--- | Narrow a view to a relative sub-range.
+-- | Narrow an immutable view to a relative sub-range.
 viewNarrow :: Arc QTime -> View z -> Maybe (View z)
 viewNarrow rel (View bounds arr) = fmap (`View` arr) (arcNarrow rel bounds)
+
+-- | Narrow a mutable view to a relative sub-range.
+mavNarrow :: Arc QTime -> MutArrayView a -> Maybe (MutArrayView a)
+mavNarrow rel (View bounds mut) = fmap (`View` mut) (arcNarrow rel bounds)
 
 -- | A view of an immutable primitive array.
 type ArrayView a = View (PrimArray a)
@@ -1014,10 +1018,31 @@ ormSamp x =
         else MutSamples $ \arc mav ->
           for_ (viewNarrow arc src) (mavCopy mav)
 
+-- | Create mutable samples that slice another generator.
+ormSlice :: Rate -> Arc Time -> MutSamples -> MutSamples
+ormSlice rate sarc rsamp = MutSamples $ \arc mav -> do
+  -- Calculate the relative overlap between the requested arc and the slice arc
+  case arcRelative (unquantizeArc rate arc) sarc of
+    Nothing -> pure () -- No overlap, do nothing to mav
+    Just (beforeU, arcU, _) -> do
+      let arcQ = quantizeArc rate arcU -- Arc to request from inner sampler
+          beforeQ = quantizeDelta rate beforeU -- Offset in the target view (relative start)
+
+      -- Check if the part we need to render has any length
+      when (arcLen arcQ > 0) $ do
+        -- Calculate the relative arc within mav where we need to write
+        let writeLen = arcLen arcQ -- Relative length
+            writeArc = arcFrom (fromIntegral beforeQ) writeLen
+
+        -- Narrow the target view to this specific arc
+        for_ (mavNarrow writeArc mav) $ \mavN -> do
+          -- Run the inner sampler for its corresponding quantized arc, writing into the narrowed view
+          runMutSamples rsamp arcQ mavN
+
 -- | Render an operation to mutable samples.
 opRenderMut
   :: forall e m n. (Monad m) => Rate -> (n -> ExceptT e m MutSamples) -> Memo (OpF n) Extent -> ExceptT e m MutSamples
-opRenderMut _rate onRef = goTop
+opRenderMut rate onRef = goTop
  where
   goTop :: Memo (OpF n) Extent -> ExceptT e m MutSamples
   goTop = memoRecallM go
@@ -1026,7 +1051,7 @@ opRenderMut _rate onRef = goTop
     OpEmpty -> pure ormEmpty
     OpSamp x -> pure (ormSamp x)
     OpRepeat _n _r -> error "TODO"
-    OpSlice _a _r -> error "TODO"
+    OpSlice a r -> pure (ormSlice rate a (annoVal r))
     OpShift _c _r -> error "TODO"
     OpConcat _rs -> error "TODO"
     OpMerge _rs -> error "TODO"

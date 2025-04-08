@@ -292,6 +292,7 @@ opTests lim =
           === Right (MemoP (Extent (Arc 0 2)) (OpSlice (Arc 1 3) (MemoP (Extent (Arc 0 6)) (OpSamp inSamps))))
         let expected = Right (isampsFromList [2, 3])
         opRenderSingle (Rate 1) op === expected
+        liftIO (opRenderMutSingle (Rate 1) op) >>= (=== expected)
     , testUnit "OpRepeat" $ do
         let inSamps = isampsFromList [1, 2, 3]
             op = Fix (OpRepeat 2 (Fix (OpSamp inSamps)) :: TestOpF)
