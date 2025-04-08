@@ -26,6 +26,7 @@ import Data.Primitive.PrimArray
   ( MutablePrimArray
   , PrimArray (..)
   , clonePrimArray
+  , copyMutablePrimArray
   , copyPrimArray
   , emptyPrimArray
   , generatePrimArray
@@ -993,6 +994,15 @@ mavCopy (View darc@(Arc dstart _) darr) (View sarc@(Arc sstart _) sarr) = do
   when (len > 0) $ withMutex darr $ \arr ->
     copyPrimArray arr (fromIntegral dstart) sarr (fromIntegral sstart) (fromIntegral len)
 
+-- | Copy a segment within a mutable array view.
+copyWithinMav :: (ParMonad m, Prim a) => MutArrayView a -> QTime -> QTime -> QDelta -> m ()
+copyWithinMav (View (Arc mavS _) mavMutex) srcRelOffset destRelOffset copyLen =
+  when (copyLen > 0) $ do
+    let srcAbsOffset = mavS + srcRelOffset
+        destAbsOffset = mavS + destRelOffset
+    withMutex mavMutex $ \marr ->
+      copyMutablePrimArray marr (fromIntegral destAbsOffset) marr (fromIntegral srcAbsOffset) (fromIntegral copyLen)
+
 -- | A type representing mutable samples.
 newtype MutSamples = MutSamples {runMutSamples :: Arc QTime -> MutArrayView Int32 -> PrimPar ()}
 
@@ -1208,11 +1218,22 @@ ormRepeat rate reps childExtent childSamp =
                       -- 2. Render full repetitions
                       when (numFullReps > 0 && arcLen fullRepArcQ > 0) $ do
                         let fullLen = arcLen fullRepArcQ
-                        for_ [1 .. numFullReps] $ \_ -> do
-                          offset <- readOffset
-                          let targetWriteArc = arcFrom offset fullLen
-                          for_ (mavNarrow targetWriteArc mav) (runMutSamples childSamp fullRepArcQ)
-                          writeOffset (addDelta offset fullLen)
+                        -- Render the *first* full repetition
+                        firstFullRepOffset <- readOffset
+                        let firstTargetWriteArc = arcFrom firstFullRepOffset fullLen
+                        for_ (mavNarrow firstTargetWriteArc mav) (runMutSamples childSamp fullRepArcQ)
+                        let offsetAfterFirst = addDelta firstFullRepOffset fullLen
+                        writeOffset offsetAfterFirst
+
+                        -- Copy for the remaining full repetitions
+                        when (numFullReps > 1) $ do
+                          for_ [1 .. numFullReps - 1] $ \_ -> do
+                            currentOffset <- readOffset
+                            -- Copy from firstFullRepOffset to currentOffset
+                            copyWithinMav mav firstFullRepOffset currentOffset fullLen
+                            -- Update offset after copy
+                            let nextOffsetAfterCopy = addDelta currentOffset fullLen
+                            writeOffset nextOffsetAfterCopy
 
                       -- 3. Render last partial repetition
                       when isLastPartial $ for_ mLastRelArcQ $ \lastRelQ -> do
