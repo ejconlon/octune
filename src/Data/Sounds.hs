@@ -10,7 +10,6 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Identity (Identity (..), runIdentity)
 import Control.Monad.Primitive (PrimMonad (..), PrimState, RealWorld)
 import Control.Monad.Reader (ReaderT (..))
-import Control.Monad.ST.Strict (ST, stToIO)
 import Control.Monad.Trans (lift)
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
@@ -21,6 +20,7 @@ import Data.Foldable (fold, foldl', for_, toList)
 import Data.Functor.Foldable (Recursive (..), cata)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
+import Data.PrimPar (Mutex, ParMonad, PrimPar, newMutex, runPrimPar, withMutex)
 import Data.Primitive.ByteArray (ByteArray (..))
 import Data.Primitive.PrimArray
   ( MutablePrimArray
@@ -45,7 +45,7 @@ import Data.Primitive.PrimArray
   )
 import Data.Primitive.PrimVar (PrimVar, newPrimVar, readPrimVar, writePrimVar)
 import Data.Primitive.Types (Prim)
-import Data.STRef.Strict (STRef, newSTRef, readSTRef, writeSTRef)
+import Data.STRef.Strict (newSTRef, readSTRef, writeSTRef)
 import Data.Semigroup (Max (..), Sum (..))
 import Data.Sequence (Seq (..))
 import Data.Set (Set)
@@ -60,20 +60,6 @@ import System.IO.Unsafe (unsafePerformIO)
 -- | A utility function for debugging that traces a list of strings.
 traceAll :: [[String]] -> a -> a
 traceAll xs = if False then id else trace ("\n<==\n" ++ unlines (fmap (("* " ++) . unwords) xs) ++ "==>\n")
-
--- Fake API for PrimPar
-
-type Mutex = STRef RealWorld
-
-type ParMonad m = (m ~ ST RealWorld)
-
-type PrimPar = ST RealWorld
-
-newMutex :: (ParMonad m) => a -> m (Mutex a)
-newMutex = newSTRef
-
-withMutex :: (ParMonad m) => Mutex a -> (a -> m b) -> m b
-withMutex ref f = readSTRef ref >>= f
 
 -- Bowtie utils
 
@@ -1044,11 +1030,12 @@ newtype MutSamples = MutSamples {runMutSamples :: Arc QTime -> MutArrayView Int3
 
 -- | Run mutable samples to produce a primitive array.
 runMutSamplesSimple :: Rate -> MutSamples -> Arc QTime -> IO InternalSamples
-runMutSamplesSimple _rate samps arc = stToIO $ do
+runMutSamplesSimple _rate samps arc = do
   let elemsLen = arcLen arc
   arr <- zeroPrimArray (fromIntegral elemsLen)
-  mav <- mavNew arr
-  runMutSamples samps arc mav
+  runPrimPar $ do
+    mav <- mavNew arr
+    runMutSamples samps arc mav
   fmap InternalSamples (unsafeFreezePrimArray arr)
 
 -- | Create empty mutable samples.
