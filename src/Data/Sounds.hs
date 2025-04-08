@@ -8,6 +8,7 @@ import Control.Monad (unless, when, (>=>))
 import Control.Monad.Except (ExceptT, MonadError (..), runExceptT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Identity (Identity (..), runIdentity)
+import Control.Monad.Par (parFor, parMap, parMapM)
 import Control.Monad.Primitive (PrimMonad (..), PrimState, RealWorld)
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.Trans (lift)
@@ -20,7 +21,7 @@ import Data.Foldable (fold, foldl', for_, toList)
 import Data.Functor.Foldable (Recursive (..), cata)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
-import Data.PrimPar (Mutex, ParMonad, PrimPar, newMutex, runPrimPar, withMutex)
+import Data.PrimPar (Mutex, ParMonad, PrimPar, newMutex, parFor_, runPrimPar, withMutex)
 import Data.Primitive.ByteArray (ByteArray (..))
 import Data.Primitive.PrimArray
   ( MutablePrimArray
@@ -1130,7 +1131,7 @@ ormConcat rate rsampsAn =
           OverlapGt -> pure () -- Request is entirely after the concatenation
           OverlapOn _ overlapArcQ _ ->
             -- Iterate through the sub-samplers
-            for_ subItems $ \(subStartQ, subAnno) -> do
+            parFor_ subItems $ \(subStartQ, subAnno) -> do
               let subExtent = annoKey subAnno
                   subSampler = annoVal subAnno
                   subLenQ = quantizeDelta rate (extentLen subExtent)
@@ -1161,7 +1162,7 @@ ormMerge childSamps =
 
       when (mavLen > 0) $ do
         -- Iterate through child samplers
-        for_ childSamps $ \childSamp -> do
+        parFor_ childSamps $ \childSamp -> do
           -- Create a temporary buffer for the child's output
           tempArr <- zeroPrimArray (fromIntegral mavLen)
           tempMav <- mavNew tempArr -- Has bounds Arc 0 mavLen
