@@ -973,9 +973,9 @@ opSimplifyF onRef = memoCataM go
               OpEmpty -> emptied
               _ -> extented op
     OpSlice arc inner ->
-      case arcIntersect (unExtent (memoKey inner)) arc of
-        Nothing -> emptied
-        Just _ -> extented op
+      extented $ case arcIntersect (unExtent (memoKey inner)) arc of
+        Nothing -> OpSlice arc (MemoP extentEmpty OpEmpty)
+        Just _ -> op
     OpConcat ops ->
       case Seq.filter (not . isOpEmpty . memoVal) ops of
         Empty -> emptied

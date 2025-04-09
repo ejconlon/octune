@@ -1,8 +1,8 @@
 module Octune.Test (main) where
 
-import Bowtie (Fix (..), memoKey, pattern MemoP)
+import Bowtie (Fix (..), memoKey, memoVal, pattern MemoP)
 import Control.Exception (evaluate, throwIO)
-import Control.Monad (forM)
+import Control.Monad (forM, when)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Foldable (for_, toList)
 import Data.Map.Strict qualified as Map
@@ -30,6 +30,7 @@ import Data.Sounds
   , arcOverlap
   , arcRelative
   , arcShift
+  , extentEmpty
   , extentPosArc
   , isampsEmpty
   , isampsFromList
@@ -42,6 +43,7 @@ import Data.Sounds
   , opRenderSingle
   , opRenderSingleOn
   , opRenderTopo
+  , opSimplifyTopo
   , quantizeArc
   , runMutSamplesSimple
   , unquantizeArc
@@ -359,28 +361,33 @@ opTests lim =
         -- Generate a map of ops with valid references
         ops <- forAll (genValidOpMap validKeys)
         -- Infer and annotate lengths
-        case opAnnoExtentTopo rate ops of
-          Left err -> liftIO (throwIO err)
-          Right ans -> do
-            case sequence ans of
-              Left n -> fail ("Missing key " ++ show n)
-              Right ans' -> do
-                renderRes <- either (liftIO . throwIO) pure (opRenderTopo rate ans')
-                renderMutRes <- either (liftIO . throwIO) pure (opRenderMutTopo rate ans')
-                for_ (Map.toList renderRes) $ \(k, samps) -> do
-                  let an = ans' Map.! k
-                      ex = memoKey an
-                      mutSamps = renderMutRes Map.! k
-                  case extentPosArc ex of
-                    Nothing -> pure ()
-                    Just arc -> do
-                      let qArc = quantizeArc rate arc
-                          qLen = arcLen qArc
-                      arr <- liftIO (evaluate (runSamples samps qArc))
-                      fromIntegral (isampsLength arr) === qLen
-                      marr <- liftIO (evaluate =<< runMutSamplesSimple rate mutSamps qArc)
-                      fromIntegral (isampsLength marr) === qLen
-                      marr === arr
+        ans <- either (liftIO . throwIO) pure (opAnnoExtentTopo rate ops)
+        ans' <- either (fail . show) pure (sequence ans)
+        -- Simplify
+        -- simps <- either (liftIO . throwIO) pure (opSimplifyTopo ans')
+        -- simps' <- either (fail . show) pure (sequence simps)
+        -- Render
+        renderRes <- either (liftIO . throwIO) pure (opRenderTopo rate ans')
+        -- renderSimpRes <- either (liftIO . throwIO) pure (opRenderTopo rate simps')
+        renderMutRes <- either (liftIO . throwIO) pure (opRenderMutTopo rate ans')
+        -- Check renders
+        for_ (Map.toList renderRes) $ \(k, samps) -> do
+          let an = ans' Map.! k
+              ex = memoKey an
+              mutSamps = renderMutRes Map.! k
+          -- simpSamps = renderSimpRes Map.! k
+          case extentPosArc ex of
+            Nothing -> pure ()
+            Just arc -> do
+              let qarc = quantizeArc rate arc
+                  qlen = arcLen qarc
+              arr <- liftIO (evaluate (runSamples samps qarc))
+              fromIntegral (isampsLength arr) === qlen
+              -- sarr <- liftIO (evaluate (runSamples simpSamps qarc))
+              -- sarr === arr
+              marr <- liftIO (evaluate =<< runMutSamplesSimple rate mutSamps qarc)
+              fromIntegral (isampsLength marr) === qlen
+              marr === arr
     , testProp "invar concat left" lim $ do
         let opE = Fix OpEmpty
         opG <- forAll (genOp @Char [])
