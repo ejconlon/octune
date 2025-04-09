@@ -2,14 +2,14 @@
 
 module Data.Sounds where
 
-import Bowtie (Anno (..), Fix (..), Memo, cataM, memoFix, memoKey, mkMemoM, pattern MemoP)
+import Bowtie (Anno (..), Fix (..), Memo, cataM, memoCataM, memoFix, memoKey, memoVal, mkMemoM, pattern MemoP)
 import Control.DeepSeq (NFData)
 import Control.Monad (unless, when, (>=>))
 import Control.Monad.Except (ExceptT, MonadError (..), runExceptT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Identity (Identity (..), runIdentity)
 import Control.Monad.Primitive (PrimMonad (..), PrimState, RealWorld)
-import Control.Monad.Reader (ReaderT (..))
+import Control.Monad.Reader (ReaderT (..), asks)
 import Control.Monad.Trans (lift)
 import Dahdit.Audio.Binary (QuietLiftedArray (..))
 import Dahdit.Audio.Wav.Simple (WAVE (..), WAVEHeader (..), WAVESamples (..), getWAVEFile, putWAVEFile)
@@ -20,6 +20,7 @@ import Data.Foldable (fold, foldl', for_, toList)
 import Data.Functor.Foldable (Recursive (..), cata)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
+import Data.Maybe (fromMaybe)
 import Data.PrimPar (Mutex, ParMonad, PrimPar, newMutex, runPrimPar, withMutex)
 import Data.Primitive.ByteArray (ByteArray (..))
 import Data.Primitive.PrimArray
@@ -598,13 +599,16 @@ data OpF n r
 -- | A fixed point of the OpF functor.
 type Op n = Fix (OpF n)
 
+-- | A fixed point of the OpF functor, annotated with its extent.
+type OpAnno n = Memo (OpF n) Extent
+
 -- | Find all references in an operation.
 opRefs :: (Ord n) => Op n -> Set n
 opRefs = cata $ \case
   OpRef n -> Set.singleton n
   op -> fold op
 
--- | Find all references in an annotated operation.
+-- | Final all references in an annotated operation.
 opAnnoRefs :: (Ord n) => Memo (OpF n) a -> Set n
 opAnnoRefs = opRefs . memoFix
 
@@ -627,6 +631,10 @@ extentEmpty = Extent (Arc 0 0)
 -- | Check if an extent is empty.
 extentNull :: Extent -> Bool
 extentNull = arcNull . unExtent
+
+-- | Calculate the intersection of two extents.
+extentIntersect :: Extent -> Extent -> Extent
+extentIntersect (Extent a1) (Extent a2) = Extent (fromMaybe (Arc 0 0) (arcIntersect a1 a2))
 
 -- | Get the positive portion of an extent as an arc.
 -- If non-empty in positive time, returns an arc starting at 0.
@@ -709,15 +717,15 @@ opInferExtentTopo :: (Ord n) => Rate -> Map n (Op n) -> Either (SortErr n) (Map 
 opInferExtentTopo rate m = topoEval opRefs m (opInferExtent rate)
 
 -- | Annotate an operation with its extent.
-opAnnoExtent :: (Monad m) => Rate -> (n -> m Extent) -> Op n -> m (Memo (OpF n) Extent)
+opAnnoExtent :: (Monad m) => Rate -> (n -> m Extent) -> Op n -> m (OpAnno n)
 opAnnoExtent rate f = mkMemoM (opInferExtentF rate f)
 
 -- | Annotate an operation with its extent, handling references with Left.
-opAnnoExtentSingle :: Rate -> Op n -> Either n (Memo (OpF n) Extent)
+opAnnoExtentSingle :: Rate -> Op n -> Either n (OpAnno n)
 opAnnoExtentSingle rate = opAnnoExtent rate Left
 
 -- | Annotate multiple operations with their extents in topological order.
-opAnnoExtentTopo :: (Ord n) => Rate -> Map n (Op n) -> Either (SortErr n) (Map n (Either n (Memo (OpF n) Extent)))
+opAnnoExtentTopo :: (Ord n) => Rate -> Map n (Op n) -> Either (SortErr n) (Map n (Either n (OpAnno n)))
 opAnnoExtentTopo rate m = topoAnnoM opRefs m (opInferExtentF rate)
 
 -- | A type representing audio samples.
@@ -905,7 +913,7 @@ orMerge :: [Samples] -> Samples
 orMerge rsamps = Samples (\arc -> isampsMix (fmap (`runSamples` arc) rsamps))
 
 -- | Render an operation to samples.
-opRender :: (Monad m) => Rate -> (n -> m Samples) -> Memo (OpF n) Extent -> m Samples
+opRender :: (Monad m) => Rate -> (n -> m Samples) -> OpAnno n -> m Samples
 opRender rate onRef = goTop
  where
   goTop = memoRecallM go
@@ -920,7 +928,7 @@ opRender rate onRef = goTop
     OpRef n -> lift (onRef n)
 
 -- | Render multiple operations to samples in topological order.
-opRenderTopo :: (Ord n) => Rate -> Map n (Memo (OpF n) Extent) -> Either (SortErr n) (Map n Samples)
+opRenderTopo :: (Ord n) => Rate -> Map n (OpAnno n) -> Either (SortErr n) (Map n Samples)
 opRenderTopo rate m = fmap (fmap runIdentity) (topoEval opAnnoRefs m (opRender rate))
 
 -- | Render an operation to samples, handling references with Left.
@@ -937,54 +945,61 @@ opRenderSingle rate op = do
   samps <- opRender rate Left op'
   pure (maybe isampsEmpty (runSamples samps . quantizeArc rate) (extentPosArc (memoKey op')))
 
-opSimplify :: (Monad m) => (n -> m (Op n)) -> Op n -> m (Op n)
-opSimplify f = cataM go
+opSimplifyF :: (Monad m) => (n -> m (OpAnno n)) -> OpAnno n -> m (OpAnno n)
+opSimplifyF onRef = memoCataM go
  where
-  isNonEmpty = \case
-    Fix OpEmpty -> False
-    _ -> True
+  isOpEmpty = \case
+    OpEmpty -> True
+    _ -> False
+  unchanged op = asks (`MemoP` op)
+  emptied = pure (MemoP extentEmpty OpEmpty)
   go op = case op of
-    OpEmpty -> pure (Fix op)
-    OpSamp _ -> pure (Fix op)
+    OpEmpty -> emptied
+    OpSamp _ -> unchanged op
     OpShift delta inner ->
-      pure $ case unFix inner of
-        OpEmpty -> Fix OpEmpty
+      case memoVal inner of
+        OpEmpty -> emptied
         _ ->
           if delta == 0
-            then inner
-            else Fix op
+            then pure inner
+            else unchanged op
     OpRepeat n inner ->
-      pure $
-        if
-          | n <= 0 -> Fix OpEmpty
-          | n == 1 -> inner
-          | otherwise ->
-              Fix $ case unFix inner of
-                OpEmpty -> OpEmpty
-                _ -> op
-    OpSlice arc _ ->
-      pure $
-        Fix $
-          if arcNull arc
-            then OpEmpty
-            else op
+      if
+        | n <= 0 -> emptied
+        | n == 1 -> pure inner
+        | otherwise ->
+            case memoVal inner of
+              OpEmpty -> emptied
+              _ -> unchanged op
+    OpSlice arc inner ->
+      case arcIntersect (unExtent (memoKey inner)) arc of
+        Nothing -> emptied
+        Just _ -> unchanged op
     OpConcat ops ->
-      pure $ case Seq.filter isNonEmpty ops of
-        Empty -> Fix OpEmpty
-        inner :<| Empty -> inner
-        ops' -> Fix (OpConcat ops')
+      case Seq.filter (not . isOpEmpty . memoVal) ops of
+        Empty -> emptied
+        inner :<| Empty -> pure inner
+        ops' ->
+          let extent' = extentConcat (fmap memoKey ops')
+          in  pure (MemoP extent' (OpConcat ops'))
     OpMerge ops ->
-      pure $ case Seq.filter isNonEmpty ops of
-        Empty -> Fix OpEmpty
-        inner :<| Empty -> inner
-        ops' -> Fix (OpMerge ops')
+      case Seq.filter (not . isOpEmpty . memoVal) ops of
+        Empty -> emptied
+        inner :<| Empty -> pure inner
+        ops' ->
+          let extent' = extentMerge (fmap memoKey ops')
+          in  pure (MemoP extent' (OpMerge ops'))
     OpRef n -> do
-      inner <- f n
-      pure $
-        Fix $
-          if isNonEmpty inner
-            then op
-            else OpEmpty
+      inner <- lift (onRef n)
+      if isOpEmpty (memoVal inner)
+        then emptied
+        else unchanged op
+
+opSimplifyTopo :: (Ord n) => Map n (OpAnno n) -> Either (SortErr n) (Map n (Either n (OpAnno n)))
+opSimplifyTopo m = topoEval opAnnoRefs m opSimplifyF
+
+opSimplifySingle :: OpAnno n -> Either n (OpAnno n)
+opSimplifySingle = opSimplifyF Left
 
 -- | A view of an array with bounds.
 -- From the outside, index 0 corresponds to the start index of the bounds.
@@ -1339,10 +1354,10 @@ ormRepeat rate reps childExtent childSamp =
 
 -- | Render an operation to mutable samples.
 opRenderMut
-  :: forall e m n. (Monad m) => Rate -> (n -> ExceptT e m MutSamples) -> Memo (OpF n) Extent -> ExceptT e m MutSamples
+  :: forall e m n. (Monad m) => Rate -> (n -> ExceptT e m MutSamples) -> OpAnno n -> ExceptT e m MutSamples
 opRenderMut rate onRef = goTop
  where
-  goTop :: Memo (OpF n) Extent -> ExceptT e m MutSamples
+  goTop :: OpAnno n -> ExceptT e m MutSamples
   goTop = memoRecallM go
   go :: OpF n (Anno Extent MutSamples) -> ReaderT Extent (ExceptT e m) MutSamples
   go = \case
@@ -1356,7 +1371,7 @@ opRenderMut rate onRef = goTop
     OpRef n -> lift (onRef n)
 
 -- | Render multiple operations to mutable samples in topological order.
-opRenderMutTopo :: (Ord n) => Rate -> Map n (Memo (OpF n) Extent) -> Either (SortErr n) (Map n MutSamples)
+opRenderMutTopo :: (Ord n) => Rate -> Map n (OpAnno n) -> Either (SortErr n) (Map n MutSamples)
 opRenderMutTopo rate m = fmap (fmap (either absurd id . runIdentity . runExceptT)) (topoEval opAnnoRefs m (opRenderMut rate))
 
 -- | Render an operation to mutable samples, handling references with Left.
