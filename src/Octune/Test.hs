@@ -6,6 +6,7 @@ import Control.Monad (forM)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Foldable (for_, toList)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe)
 import Data.Primitive.PrimArray (primArrayFromList)
 import Data.Sequence (Seq (..))
 import Data.Sequence qualified as Seq
@@ -24,6 +25,7 @@ import Data.Sounds
   , Time (..)
   , arcDeltaCover
   , arcDeltaCoverMax
+  , arcEmpty
   , arcLen
   , arcOverlap
   , arcRelative
@@ -35,8 +37,10 @@ import Data.Sounds
   , opAnnoExtentSingle
   , opAnnoExtentTopo
   , opRenderMutSingle
+  , opRenderMutSingleOn
   , opRenderMutTopo
   , opRenderSingle
+  , opRenderSingleOn
   , opRenderTopo
   , quantizeArc
   , runMutSamplesSimple
@@ -44,7 +48,7 @@ import Data.Sounds
   )
 import Data.Topo (SortErr, topoSort)
 import Data.Traversable (for)
-import PropUnit (Gen, TestLimit, TestTree, assert, forAll, testGroup, testMain, testProp, testUnit, (===))
+import PropUnit (Gen, PropertyT, TestLimit, TestTree, assert, forAll, testGroup, testMain, testProp, testUnit, (===))
 import PropUnit.Hedgehog.Gen qualified as Gen
 import PropUnit.Hedgehog.Range qualified as Range
 
@@ -377,7 +381,39 @@ opTests lim =
                       marr <- liftIO (evaluate =<< runMutSamplesSimple rate mutSamps qArc)
                       fromIntegral (isampsLength marr) === qLen
                       marr === arr
+    , testProp "invar concat left" lim $ do
+        let opE = Fix OpEmpty
+        opG <- forAll (genOp @Char [])
+        let opBase = Fix (OpConcat (Seq.fromList [opE, opG]))
+        assertRenderSame opBase opG
+    , testProp "invar concat right" lim $ do
+        let opE = Fix OpEmpty
+        opG <- forAll (genOp @Char [])
+        let opBase = Fix (OpConcat (Seq.fromList [opG, opE]))
+        assertRenderSame opBase opG
+    , testProp "invar merge left" lim $ do
+        let opE = Fix OpEmpty
+        opG <- forAll (genOp @Char [])
+        let opBase = Fix (OpMerge (Seq.fromList [opE, opG]))
+        assertRenderSame opBase opG
+    , testProp "invar merge right" lim $ do
+        let opE = Fix OpEmpty
+        opG <- forAll (genOp @Char [])
+        let opBase = Fix (OpMerge (Seq.fromList [opG, opE]))
+        assertRenderSame opBase opG
     ]
+
+assertRenderSame :: (Eq n, Show n) => Op n -> Op n -> PropertyT IO ()
+assertRenderSame opBase opMod = do
+  let rate = Rate 1
+  an <- either (const (fail "impossible")) pure (opAnnoExtentSingle rate opBase)
+  let arc = fromMaybe (arcEmpty @Time) (extentPosArc (memoKey an))
+  let irBase = opRenderSingleOn rate opBase arc
+      irMod = opRenderSingleOn rate opMod arc
+  irMod === irBase
+  mrBase <- liftIO (opRenderMutSingleOn rate opBase arc)
+  mrMod <- liftIO (opRenderMutSingleOn rate opMod arc)
+  mrBase === mrMod
 
 main :: IO ()
 main = testMain $ \lim ->

@@ -1319,3 +1319,10 @@ opRenderMutSingle rate op = runExceptT $ do
     Just arc -> do
       let arc' = quantizeArc rate arc
       liftIO (runMutSamplesSimple rate samps arc')
+
+opRenderMutSingleOn :: Rate -> Op n -> Arc Time -> IO (Either n InternalSamples)
+opRenderMutSingleOn rate op arc = runExceptT $ do
+  op' <- either throwError pure (opAnnoExtentSingle rate op)
+  samps <- opRenderMut rate throwError op'
+  let arc' = quantizeArc rate arc
+  liftIO (runMutSamplesSimple rate samps arc')
