@@ -945,24 +945,25 @@ opRenderSingle rate op = do
   samps <- opRender rate Left op'
   pure (maybe isampsEmpty (runSamples samps . quantizeArc rate) (extentPosArc (memoKey op')))
 
+-- | Simplify an operation through empty propagation and shift/repeat identities.
 opSimplifyF :: (Monad m) => (n -> m (OpAnno n)) -> OpAnno n -> m (OpAnno n)
 opSimplifyF onRef = memoCataM go
  where
   isOpEmpty = \case
     OpEmpty -> True
     _ -> False
-  unchanged op = asks (`MemoP` op)
+  extented op = asks (`MemoP` op)
   emptied = pure (MemoP extentEmpty OpEmpty)
   go op = case op of
     OpEmpty -> emptied
-    OpSamp _ -> unchanged op
+    OpSamp _ -> extented op
     OpShift delta inner ->
       case memoVal inner of
         OpEmpty -> emptied
         _ ->
           if delta == 0
             then pure inner
-            else unchanged op
+            else extented op
     OpRepeat n inner ->
       if
         | n <= 0 -> emptied
@@ -970,30 +971,26 @@ opSimplifyF onRef = memoCataM go
         | otherwise ->
             case memoVal inner of
               OpEmpty -> emptied
-              _ -> unchanged op
+              _ -> extented op
     OpSlice arc inner ->
       case arcIntersect (unExtent (memoKey inner)) arc of
         Nothing -> emptied
-        Just _ -> unchanged op
+        Just _ -> extented op
     OpConcat ops ->
       case Seq.filter (not . isOpEmpty . memoVal) ops of
         Empty -> emptied
         inner :<| Empty -> pure inner
-        ops' ->
-          let extent' = extentConcat (fmap memoKey ops')
-          in  pure (MemoP extent' (OpConcat ops'))
+        ops' -> extented (OpConcat ops')
     OpMerge ops ->
       case Seq.filter (not . isOpEmpty . memoVal) ops of
         Empty -> emptied
         inner :<| Empty -> pure inner
-        ops' ->
-          let extent' = extentMerge (fmap memoKey ops')
-          in  pure (MemoP extent' (OpMerge ops'))
+        ops' -> extented (OpMerge ops')
     OpRef n -> do
       inner <- lift (onRef n)
       if isOpEmpty (memoVal inner)
         then emptied
-        else unchanged op
+        else extented op
 
 opSimplifyTopo :: (Ord n) => Map n (OpAnno n) -> Either (SortErr n) (Map n (Either n (OpAnno n)))
 opSimplifyTopo m = topoEval opAnnoRefs m opSimplifyF
