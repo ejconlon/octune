@@ -451,10 +451,13 @@ genOp validKeys = genR
     ]
 
 genSeqSubterm :: Gen (Op n) -> (Seq.Seq (Op n) -> Op n) -> Gen (Op n)
-genSeqSubterm genOp' f = do
-  n <- Gen.integral (Range.linear 1 3)
-  ops <- Gen.list (Range.singleton n) genOp'
-  pure (f (Seq.fromList ops))
+genSeqSubterm genR f = do
+  n <- Gen.int (Range.linear 1 3)
+  case n of
+    1 -> Gen.subterm genR (f . Seq.singleton)
+    2 -> Gen.subterm2 genR genR (\r1 r2 -> f (Seq.fromList [r1, r2]))
+    3 -> Gen.subterm3 genR genR genR (\r1 r2 r3 -> f (Seq.fromList [r1, r2, r3]))
+    _ -> error "impossible"
 
 genValidOpMap :: (Ord n) => Set.Set n -> Gen (Map.Map n (Op n))
 genValidOpMap validKeys = do

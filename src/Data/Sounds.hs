@@ -48,6 +48,7 @@ import Data.Primitive.Types (Prim)
 import Data.STRef.Strict (newSTRef, readSTRef, writeSTRef)
 import Data.Semigroup (Max (..), Sum (..))
 import Data.Sequence (Seq (..))
+import Data.Sequence qualified as Seq
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Topo (SortErr (..), topoAnnoM, topoEval)
@@ -935,6 +936,55 @@ opRenderSingle rate op = do
   op' <- opAnnoExtentSingle rate op
   samps <- opRender rate Left op'
   pure (maybe isampsEmpty (runSamples samps . quantizeArc rate) (extentPosArc (memoKey op')))
+
+opSimplify :: (Monad m) => (n -> m (Op n)) -> Op n -> m (Op n)
+opSimplify f = cataM go
+ where
+  isNonEmpty = \case
+    Fix OpEmpty -> False
+    _ -> True
+  go op = case op of
+    OpEmpty -> pure (Fix op)
+    OpSamp _ -> pure (Fix op)
+    OpShift delta inner ->
+      pure $ case unFix inner of
+        OpEmpty -> Fix OpEmpty
+        _ ->
+          if delta == 0
+            then inner
+            else Fix op
+    OpRepeat n inner ->
+      pure $
+        if
+          | n <= 0 -> Fix OpEmpty
+          | n == 1 -> inner
+          | otherwise ->
+              Fix $ case unFix inner of
+                OpEmpty -> OpEmpty
+                _ -> op
+    OpSlice arc _ ->
+      pure $
+        Fix $
+          if arcNull arc
+            then OpEmpty
+            else op
+    OpConcat ops ->
+      pure $ case Seq.filter isNonEmpty ops of
+        Empty -> Fix OpEmpty
+        inner :<| Empty -> inner
+        ops' -> Fix (OpConcat ops')
+    OpMerge ops ->
+      pure $ case Seq.filter isNonEmpty ops of
+        Empty -> Fix OpEmpty
+        inner :<| Empty -> inner
+        ops' -> Fix (OpMerge ops')
+    OpRef n -> do
+      inner <- f n
+      pure $
+        Fix $
+          if isNonEmpty inner
+            then op
+            else OpEmpty
 
 -- | A view of an array with bounds.
 -- From the outside, index 0 corresponds to the start index of the bounds.
