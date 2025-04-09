@@ -21,7 +21,6 @@ import Control.DeepSeq (NFData (..))
 import Control.Exception (Exception)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Par (InclusiveRange (..), parFor)
 import Control.Monad.Par.Class (ParFuture (..), ParIVar (..))
 import Control.Monad.Par.IO (ParIO)
 import Control.Monad.Par.IO qualified as PIO
@@ -33,8 +32,6 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromJust)
 import Data.Primitive.MVar (MVar, newMVar, putMVar, readMVar, takeMVar)
-import Data.Sequence (Seq)
-import Data.Sequence qualified as Seq
 import Data.Set (Set)
 import Data.Traversable (for)
 import Data.Typeable (Typeable)

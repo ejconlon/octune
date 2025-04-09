@@ -8,7 +8,6 @@ import Control.Monad (unless, when, (>=>))
 import Control.Monad.Except (ExceptT, MonadError (..), runExceptT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Identity (Identity (..), runIdentity)
-import Control.Monad.Par (parFor, parMap, parMapM)
 import Control.Monad.Primitive (PrimMonad (..), PrimState, RealWorld)
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.Trans (lift)
@@ -1131,7 +1130,7 @@ ormConcat rate rsampsAn =
           OverlapGt -> pure () -- Request is entirely after the concatenation
           OverlapOn _ overlapArcQ _ ->
             -- Iterate through the sub-samplers
-            parFor_ subItems $ \(subStartQ, subAnno) -> do
+            for_ subItems $ \(subStartQ, subAnno) -> do
               let subExtent = annoKey subAnno
                   subSampler = annoVal subAnno
                   subLenQ = quantizeDelta rate (extentLen subExtent)
@@ -1161,11 +1160,15 @@ ormMerge childSamps =
           mavStart = arcStart mavBounds
 
       when (mavLen > 0) $ do
+        -- Create a temporary buffer for the child's output
+        tempArr <- newPrimArray (fromIntegral mavLen)
+        tempMav <- mavNew tempArr -- Has bounds Arc 0 mavLen
+
         -- Iterate through child samplers
-        parFor_ childSamps $ \childSamp -> do
-          -- Create a temporary buffer for the child's output
-          tempArr <- zeroPrimArray (fromIntegral mavLen)
-          tempMav <- mavNew tempArr -- Has bounds Arc 0 mavLen
+        for_ childSamps $ \childSamp -> do
+          -- Clear the temporary buffer
+          withMutex (viewArray tempMav) $ \marr ->
+            setPrimArray marr 0 (fromIntegral mavLen) 0
 
           -- Run the child sampler into the temporary buffer
           runMutSamples childSamp requestedArcQ tempMav
