@@ -1,8 +1,8 @@
 module Octune.Test (main) where
 
-import Bowtie (Fix (..), memoKey, memoVal, pattern MemoP)
+import Bowtie (Fix (..), memoKey, pattern MemoP)
 import Control.Exception (evaluate, throwIO)
-import Control.Monad (forM, when)
+import Control.Monad (forM)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Foldable (for_, toList)
 import Data.Map.Strict qualified as Map
@@ -11,7 +11,8 @@ import Data.Primitive.PrimArray (primArrayFromList)
 import Data.Sequence (Seq (..))
 import Data.Sequence qualified as Seq
 import Data.Set qualified as Set
-import Data.Sounds
+import Data.Traversable (for)
+import Minipat.Octune.Sounds
   ( Arc (..)
   , Delta (..)
   , Extent (..)
@@ -30,7 +31,6 @@ import Data.Sounds
   , arcOverlap
   , arcRelative
   , arcShift
-  , extentEmpty
   , extentPosArc
   , isampsEmpty
   , isampsFromList
@@ -43,13 +43,11 @@ import Data.Sounds
   , opRenderSingle
   , opRenderSingleOn
   , opRenderTopo
-  , opSimplifyTopo
   , quantizeArc
   , runMutSamplesSimple
   , unquantizeArc
   )
-import Data.Topo (SortErr, topoSort)
-import Data.Traversable (for)
+import Minipat.Octune.Topo (SortErr (..), topoSort)
 import PropUnit (Gen, PropertyT, TestLimit, TestTree, assert, forAll, testGroup, testMain, testProp, testUnit, (===))
 import PropUnit.Hedgehog.Gen qualified as Gen
 import PropUnit.Hedgehog.Range qualified as Range

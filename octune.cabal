@@ -1,6 +1,6 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.37.0.
+-- This file has been generated from package.yaml by hpack version 0.38.0.
 --
 -- see: https://github.com/sol/hpack
 
@@ -29,11 +29,10 @@ source-repository head
 library
   exposed-modules:
       Data.Combinator
-      Data.PrimPar
-      Data.Sounds
-      Data.Topo
+      Minipat.Octune.PrimPar
+      Minipat.Octune.Sounds
+      Minipat.Octune.Topo
       Octune.Annotate
-      Octune.CodeGen.NewSamplesGen
       Octune.CodeGen.SamplesGen
       Octune.CodeGen.WAVEGen
       Octune.NameResolution

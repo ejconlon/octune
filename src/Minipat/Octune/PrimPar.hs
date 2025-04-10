@@ -1,4 +1,4 @@
-module Data.PrimPar
+module Minipat.Octune.PrimPar
   ( ParMonad
   , Mutex
   , newMutex

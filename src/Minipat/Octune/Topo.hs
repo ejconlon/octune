@@ -1,4 +1,4 @@
-module Data.Topo
+module Minipat.Octune.Topo
   ( SortErr (..)
   , topoSort
   , topoEval

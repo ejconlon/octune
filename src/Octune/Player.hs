@@ -7,7 +7,7 @@ import Dahdit.Audio.Common (rethrow)
 import Dahdit.Audio.Wav.Simple qualified as DAWS
 import Dahdit.Iface (encode)
 import Dahdit.Sizes (ElemCount (..))
-import Data.Sounds (InternalSamples, dumpSamples, isampsLength)
+import Minipat.Octune.Sounds (InternalSamples, dumpSamples, isampsLength)
 import Sound.ProteaAudio qualified as P
 
 play :: InternalSamples -> IO ()

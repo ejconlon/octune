@@ -9,7 +9,7 @@ import Data.Bits (Bits (shiftL))
 import Data.Int (Int32)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
-import Data.Sounds
+import Minipat.Octune.Sounds
   ( InternalSamples
   , SampleStream (..)
   , clapSamples

@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -Wno-identities #-}
 
-module Data.Sounds where
+module Minipat.Octune.Sounds where
 
 import Bowtie (Anno (..), Fix (..), Memo, cataM, memoCataM, memoFix, memoKey, memoVal, mkMemoM, pattern MemoP)
 import Control.DeepSeq (NFData)
@@ -21,7 +21,6 @@ import Data.Functor.Foldable (Recursive (..), cata)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe)
-import Data.PrimPar (Mutex, ParMonad, PrimPar, newMutex, runPrimPar, withMutex)
 import Data.Primitive.ByteArray (ByteArray (..))
 import Data.Primitive.PrimArray
   ( MutablePrimArray
@@ -52,9 +51,10 @@ import Data.Sequence (Seq (..))
 import Data.Sequence qualified as Seq
 import Data.Set (Set)
 import Data.Set qualified as Set
-import Data.Topo (SortErr (..), topoAnnoM, topoEval)
 import Data.Void (absurd)
 import Debug.Trace (trace)
+import Minipat.Octune.PrimPar (Mutex, ParMonad, PrimPar, newMutex, runPrimPar, withMutex)
+import Minipat.Octune.Topo (SortErr (..), topoAnnoM, topoEval)
 import Paths_octune (getDataFileName)
 import System.Directory (doesFileExist)
 import System.IO.Unsafe (unsafePerformIO)
