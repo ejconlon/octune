@@ -35,6 +35,7 @@ dependencies:
 - transformers
 - bowtie
 - recursion-schemes
+- looksee
 # Test deps - TODO move to suite
 - prop-unit
 

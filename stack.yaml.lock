@@ -65,6 +65,13 @@ packages:
       size: 752
   original:
     hackage: bowtie-0.6.0
+- completed:
+    hackage: looksee-0.8.0@sha256:4d7651657df1b7408d1085a521acd8088a83333992879d6a9bc1ba944cf12fe1,3261
+    pantry-tree:
+      sha256: 42096efa405eeff36843ab3d23272dd62eec0a1d32a918692768a6cda8bff73a
+      size: 279
+  original:
+    hackage: looksee-0.8.0
 snapshots:
 - completed:
     sha256: d133abe75e408a407cce3f032c96ac1bbadf474a93b5156ebf4135b53382d56b

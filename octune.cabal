@@ -97,6 +97,7 @@ library
     , directory
     , either
     , lens
+    , looksee
     , megaparsec
     , monad-par
     , mtl
@@ -157,6 +158,7 @@ executable octune
     , directory
     , either
     , lens
+    , looksee
     , megaparsec
     , monad-par
     , mtl
@@ -217,6 +219,7 @@ test-suite octune-test
     , directory
     , either
     , lens
+    , looksee
     , megaparsec
     , monad-par
     , mtl
