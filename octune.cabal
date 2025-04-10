@@ -29,9 +29,15 @@ source-repository head
 library
   exposed-modules:
       Data.Combinator
+      Minipat.Octune.Ast
+      Minipat.Octune.InternalSamples
+      Minipat.Octune.Op
       Minipat.Octune.PrimPar
       Minipat.Octune.Sounds
+      Minipat.Octune.Test
+      Minipat.Octune.Time
       Minipat.Octune.Topo
+      Minipat.Octune.Util
       Octune.Annotate
       Octune.CodeGen.SamplesGen
       Octune.CodeGen.WAVEGen
@@ -42,7 +48,6 @@ library
       Octune.Player
       Octune.StaticAnalysis.BarBeats
       Octune.StaticAnalysis.VarUsage
-      Octune.Test
       Octune.Types.Ann
       Octune.Types.AST
       Octune.Types.Core

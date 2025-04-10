@@ -9,10 +9,9 @@ import Data.Bits (Bits (shiftL))
 import Data.Int (Int32)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
-import Minipat.Octune.Sounds
+import Minipat.Octune.InternalSamples
   ( InternalSamples
   , SampleStream (..)
-  , clapSamples
   , isampsConcat
   , isampsConstant
   , isampsEmpty
@@ -24,8 +23,11 @@ import Minipat.Octune.Sounds
   , isampsReplicate
   , isampsToWave
   , isampsTrim
-  , snareSamples
   , streamToIsamps
+  )
+import Minipat.Octune.Sounds
+  ( clapSamples
+  , snareSamples
   )
 import Octune.Types.AST (LineFun (..), Waveform (..))
 import Octune.Types.Core (Core (..))

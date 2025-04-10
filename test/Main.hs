@@ -1,6 +1,6 @@
 module Main where
 
-import Octune.Test qualified
+import Minipat.Octune.Test qualified
 
 main :: IO ()
-main = Octune.Test.main
+main = Minipat.Octune.Test.main

@@ -1,4 +1,4 @@
-module Octune.Test (main) where
+module Minipat.Octune.Test (main) where
 
 import Bowtie (Fix (..), memoKey, pattern MemoP)
 import Control.Exception (evaluate, throwIO)
@@ -12,17 +12,33 @@ import Data.Sequence (Seq (..))
 import Data.Sequence qualified as Seq
 import Data.Set qualified as Set
 import Data.Traversable (for)
-import Minipat.Octune.Sounds
+import Minipat.Octune.InternalSamples
+  ( InternalSamples (..)
+  , isampsEmpty
+  , isampsFromList
+  , isampsLength
+  )
+import Minipat.Octune.Op
+  ( Op
+  , OpF (..)
+  , Samples (..)
+  , opAnnoExtentSingle
+  , opAnnoExtentTopo
+  , opRenderMutSingle
+  , opRenderMutSingleOn
+  , opRenderMutTopo
+  , opRenderSingle
+  , opRenderSingleOn
+  , opRenderTopo
+  , runMutSamplesSimple
+  )
+import Minipat.Octune.Time
   ( Arc (..)
   , Delta (..)
   , Extent (..)
-  , InternalSamples (..)
-  , Op
-  , OpF (..)
   , Overlap (..)
   , QTime (..)
   , Rate (..)
-  , Samples (..)
   , Time (..)
   , arcDeltaCover
   , arcDeltaCoverMax
@@ -32,19 +48,7 @@ import Minipat.Octune.Sounds
   , arcRelative
   , arcShift
   , extentPosArc
-  , isampsEmpty
-  , isampsFromList
-  , isampsLength
-  , opAnnoExtentSingle
-  , opAnnoExtentTopo
-  , opRenderMutSingle
-  , opRenderMutSingleOn
-  , opRenderMutTopo
-  , opRenderSingle
-  , opRenderSingleOn
-  , opRenderTopo
   , quantizeArc
-  , runMutSamplesSimple
   , unquantizeArc
   )
 import Minipat.Octune.Topo (SortErr (..), topoSort)
