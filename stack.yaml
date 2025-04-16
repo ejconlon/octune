@@ -10,11 +10,8 @@ allow-newer-deps:
 extra-deps:
 - aeson-via-0.2.3
 - data-sword-0.2.0.3
-- git: git@github.com:ejconlon/dahdit.git
-  commit: 3247b0fd095da48145b148917d376e9763373d94
-  subdirs:
-  - dahdit
-  - dahdit-audio
+- dahdit-0.8.0
+- dahdit-audio-0.8.0
 - proteaaudio-0.10.1
 - prop-unit-1.0.1
 - bowtie-0.6.0

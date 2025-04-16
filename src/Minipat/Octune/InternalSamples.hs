@@ -2,14 +2,12 @@ module Minipat.Octune.InternalSamples where
 
 import Control.DeepSeq (NFData)
 import Control.Monad (when)
-import Dahdit (ByteCount (..), ElemCount (..), LiftedPrimArray (..))
-import Dahdit.Audio.Binary (QuietLiftedArray (..))
+import Dahdit (ByteCount (..), ElemCount (..))
 import Dahdit.Audio.Wav.Simple (WAVESamples (..))
 import Data.Bifunctor (second)
 import Data.Int (Int32)
-import Data.Primitive.ByteArray (ByteArray (..))
 import Data.Primitive.PrimArray
-  ( PrimArray (..)
+  ( PrimArray
   , clonePrimArray
   , copyPrimArray
   , emptyPrimArray
@@ -103,11 +101,11 @@ isampsFill off len val (InternalSamples sarr) = InternalSamples $ runPrimArray $
 
 -- | Convert samples to WAV format.
 isampsToWave :: InternalSamples -> WAVESamples
-isampsToWave = WAVESamples . QuietLiftedArray . LiftedPrimArray . (\(PrimArray x) -> ByteArray x) . unInternalSamples
+isampsToWave = WAVESamples . unInternalSamples
 
 -- | Convert WAV format to samples.
 isampsFromWave :: WAVESamples -> InternalSamples
-isampsFromWave = InternalSamples . (\(ByteArray x) -> PrimArray x) . unLiftedPrimArray . unQuietLiftedArray . unWAVESamples
+isampsFromWave = InternalSamples . unWAVESamples
 
 -- | A stream of samples that can be repeated.
 data SampleStream = SampleStream
