@@ -2,7 +2,6 @@ module Minipat.Octune.Ast where
 
 import Bowtie (Fix)
 import Data.Sequence (Seq)
-import Data.Set (Set)
 import Data.Text (Text)
 
 data Waveform
@@ -90,5 +89,5 @@ data NoteModifier
 
 type Beats = Rational
 
-data Note = Note !(Set NoteModifier) !Beats !Sound
+data Note = Note !(Seq NoteModifier) !Beats !Sound
   deriving (Eq, Ord, Show)

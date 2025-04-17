@@ -15,4 +15,8 @@ extra-deps:
 - proteaaudio-0.10.1
 - prop-unit-1.0.1
 - bowtie-0.6.0
-- looksee-0.8.0
+# - looksee-0.8.1
+- git: git@github.com:ejconlon/looksee.git
+  commit: cacc35931643b941b1a53af096c563819406e50a
+  subdirs:
+  - looksee
