@@ -29,6 +29,7 @@ source-repository head
 library
   exposed-modules:
       Data.Combinator
+      Minipat.Octune.Ana
       Minipat.Octune.Ast
       Minipat.Octune.InternalSamples
       Minipat.Octune.Op

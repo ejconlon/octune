@@ -1,6 +1,6 @@
 module Minipat.Octune.Test (main) where
 
-import Bowtie (Fix (..), memoKey, pattern MemoP)
+import Bowtie (Fix (..), Memo (..), memoKey)
 import Control.Exception (evaluate, throwIO)
 import Control.Monad (forM)
 import Control.Monad.IO.Class (MonadIO (..))
@@ -364,17 +364,16 @@ opTests lim =
         ops <- forAll (genValidOpMap validKeys)
         -- Infer and annotate lengths
         ans <- either (liftIO . throwIO) pure (opAnnoExtentTopo rate ops)
-        ans' <- either (fail . show) pure (sequence ans)
         -- Simplify
         -- simps <- either (liftIO . throwIO) pure (opSimplifyTopo ans')
         -- simps' <- either (fail . show) pure (sequence simps)
         -- Render
-        renderRes <- either (liftIO . throwIO) pure (opRenderTopo rate ans')
+        renderRes <- either (liftIO . throwIO) pure (opRenderTopo rate ans)
         -- renderSimpRes <- either (liftIO . throwIO) pure (opRenderTopo rate simps')
-        renderMutRes <- either (liftIO . throwIO) pure (opRenderMutTopo rate ans')
+        renderMutRes <- either (liftIO . throwIO) pure (opRenderMutTopo rate ans)
         -- Check renders
         for_ (Map.toList renderRes) $ \(k, samps) -> do
-          let an = ans' Map.! k
+          let an = ans Map.! k
               ex = memoKey an
               mutSamps = renderMutRes Map.! k
           -- simpSamps = renderSimpRes Map.! k

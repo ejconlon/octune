@@ -3,8 +3,7 @@
 module Minipat.Octune.Parser where
 
 import Bowtie.Anno (Anno (..))
-import Bowtie.Memo (Memo, pattern MemoP)
-import Control.Applicative ((<|>))
+import Bowtie.Memo (Memo (..), MemoF (..), reMkMemo)
 import Control.Exception (throwIO)
 import Data.Char (isAlphaNum, isLower, isUpper)
 import Data.Maybe (fromMaybe)
@@ -16,6 +15,55 @@ import Data.Void (Void)
 import Looksee qualified as L
 import Looksee.Lexer qualified as LL
 import Minipat.Octune.Ast
+
+type OffSpan = L.Span Int
+
+type OffExp = Memo ExpF OffSpan
+
+type OffDecl = Anno OffSpan (Decl OffExp)
+
+type OffFile = Anno OffSpan (File OffDecl)
+
+data Loc = Loc
+  { locOff :: !Int
+  , locRow :: !Int
+  , locCol :: !Int
+  }
+  deriving stock (Eq, Ord, Show)
+
+type LocSpan = L.Span Loc
+
+data Pos = Pos
+  { fsPath :: !FilePath
+  , fsSpan :: !LocSpan
+  }
+  deriving stock (Eq, Ord, Show)
+
+type PosExp = Memo ExpF Pos
+
+type PosDecl = Anno Pos (Decl PosExp)
+
+type PosFile = Anno Pos (File PosDecl)
+
+transformSpan :: FilePath -> Text -> OffSpan -> Pos
+transformSpan fp contents =
+  let !lcl = L.calculateLineCol contents
+  in  \(L.Span s e) ->
+        let (!sr, !sc) = L.lookupLineCol s lcl
+            (!er, !ec) = L.lookupLineCol e lcl
+            !sl = Loc s sr sc
+            !el = Loc e er ec
+            !ss = L.Span sl el
+        in  Pos fp ss
+
+fileOnSpans :: (x -> y) -> Anno x (File (Anno x (Decl (Memo ExpF x)))) -> Anno y (File (Anno y (Decl (Memo ExpF y))))
+fileOnSpans f = onFile
+ where
+  onFile (Anno x (File modn decls)) = Anno (f x) (File modn (fmap onDecl decls))
+  onDecl (Anno x (Decl n ex)) = Anno (f x) (Decl n (reMkMemo (\(MemoFP xx _) -> f xx) ex))
+
+transformAllSpans :: FilePath -> Text -> OffFile -> PosFile
+transformAllSpans fp contents = fileOnSpans (transformSpan fp contents)
 
 type P = L.Parser Void
 
@@ -129,10 +177,10 @@ identP = T.cons <$> lowerCharP <*> identTrailP
 moduleSymP :: P ()
 moduleSymP = lexP (L.textP_ "module")
 
-moduleNameP :: P (Seq Text)
+moduleNameP :: P ModName
 moduleNameP = L.sepByP (L.charP_ '.') moduleComponentP
 
-moduleDeclP :: P (Seq Text)
+moduleDeclP :: P ModName
 moduleDeclP = lexP (moduleSymP *> moduleNameP)
 
 qualNameP :: P QualName
@@ -143,10 +191,10 @@ qualNameP = lexP $ do
     pure m
   fmap (QualName m) identP
 
-annoP :: P a -> P (Anno Loc a)
+annoP :: P a -> P (Anno OffSpan a)
 annoP = L.spanAroundP Anno
 
-memoP :: P (f (Memo f Loc)) -> P (Memo f Loc)
+memoP :: P (f (Memo f OffSpan)) -> P (Memo f OffSpan)
 memoP = L.spanAroundP MemoP
 
 openSongP
@@ -189,43 +237,37 @@ colonP = lexP (L.charP_ ':')
 equalsP = lexP (L.charP_ '=')
 tildeP = lexP (L.charP_ '=')
 
-fileP :: P File
+fileP :: P OffFile
 fileP = lexP (annoP (File <$> moduleDeclP <*> L.repeatP declP))
 
-declP :: P Decl
-declP = songP <|> partP
-
-songP :: P Decl
-songP = lexP $ annoP $ do
+declP :: P OffDecl
+declP = lexP $ annoP $ do
   ident <- lexP identP
   equalsP
-  L.betweenP openSongP closeSongP $ do
-    bpm <- fmap fromInteger (lexP L.uintP)
-    colonP
-    fmap (DeclSong ident bpm) expP
+  fmap (Decl ident) expP
 
-partP :: P Decl
-partP = lexP $ annoP $ do
-  ident <- lexP identP
-  equalsP
-  fmap (DeclPart ident) expP
+expP :: P OffExp
+expP = L.altP [noteExpP, checkExpP, bpmExpP, appExpP, varExpP]
 
-expP :: P Exp
-expP = L.altP [noteExpP, checkExpP, appExpP, varExpP]
-
-noteExpP :: P Exp
+noteExpP :: P OffExp
 noteExpP = lexP (memoP (ExpNote <$> noteP))
 
-checkExpP :: P Exp
+checkExpP :: P OffExp
 checkExpP = lexP $ memoP $ L.betweenP openCheckP closeCheckP $ do
   beats <- lexP L.udecP
   colonP
   fmap (ExpCheck beats) expP
 
-varExpP :: P Exp
+varExpP :: P OffExp
 varExpP = lexP (memoP (ExpVar <$> qualNameP))
 
-appExpP :: P Exp
+bpmExpP :: P OffExp
+bpmExpP = lexP $ memoP $ L.betweenP openSongP closeSongP $ do
+  bpm <- fmap fromInteger (lexP L.uintP)
+  colonP
+  fmap (ExpBpm bpm) expP
+
+appExpP :: P OffExp
 appExpP =
   L.altP
     [ appRepeatP
@@ -237,17 +279,17 @@ appExpP =
     , appSequP
     ]
 
-appRepeatP :: P Exp
+appRepeatP :: P OffExp
 appRepeatP = lexP $ memoP $ L.betweenP openRepeatP closeRepeatP $ do
   times <- lexP L.udecP
   colonP
   fmap (ExpApp (FunRepeat times)) (L.repeatP expP)
 
-appMergeP :: P Exp
+appMergeP :: P OffExp
 appMergeP = lexP $ memoP $ L.betweenP openMergeP closeMergeP $ do
   fmap (ExpApp FunMerge) (L.repeatP expP)
 
-appChordP :: P Exp
+appChordP :: P OffExp
 appChordP = lexP $ memoP $ L.betweenP openMergeP closeMergeP $ do
   nodeMods <- L.repeatP noteModifierP
   beats <- lexP L.udecP
@@ -257,19 +299,19 @@ appChordP = lexP $ memoP $ L.betweenP openMergeP closeMergeP $ do
         MemoP loc (ExpNote (Note nodeMods beats n))
   pure (ExpApp FunMerge notes)
 
-appUsingWfP :: P Exp
+appUsingWfP :: P OffExp
 appUsingWfP = lexP $ memoP $ L.betweenP openUsingWfP closeUsingWfP $ do
   wf <- lexP waveformP
   colonP
   fmap (ExpApp (FunWaveform wf)) (L.repeatP expP)
 
-appVolumeP :: P Exp
+appVolumeP :: P OffExp
 appVolumeP = lexP $ memoP $ L.betweenP openVolumeP closeVolumeP $ do
   vol <- lexP L.udecP
   colonP
   fmap (ExpApp (FunVolume vol)) (L.repeatP expP)
 
-appSliceP :: P Exp
+appSliceP :: P OffExp
 appSliceP = lexP $ memoP $ L.betweenP openSliceP closeSliceP $ do
   start <- lexP L.udecP
   tildeP
@@ -277,14 +319,16 @@ appSliceP = lexP $ memoP $ L.betweenP openSliceP closeSliceP $ do
   colonP
   fmap (ExpApp (FunSlice start end)) (L.repeatP expP)
 
-appSequP :: P Exp
+appSequP :: P OffExp
 appSequP = lexP $ memoP $ L.betweenP openSequP closeSequP $ do
   fmap (ExpApp FunSequ) (L.repeatP expP)
 
 parseI :: P a -> String -> IO a
 parseI p s = L.parseI p (T.pack s) >>= either throwIO pure
 
-parseF :: FilePath -> IO File
+parseF :: FilePath -> IO PosFile
 parseF fp = do
   contents <- TIO.readFile fp
-  either throwIO pure (L.parse fileP contents)
+  case L.parse fileP contents of
+    Left err -> throwIO err
+    Right val -> pure (transformAllSpans fp contents val)

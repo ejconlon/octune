@@ -47,25 +47,19 @@ packages:
   original:
     hackage: prop-unit-1.0.1
 - completed:
-    hackage: bowtie-0.6.0@sha256:356fc3dc5e79c9b8560cae52adbc7e32841015af456d5b767feede997197ca18,2080
+    hackage: bowtie-0.7.0@sha256:d77a07e38870904ad90ca32f9c41a3f63ea4cd87ebbc2c51571d2a80d369edd5,2080
     pantry-tree:
-      sha256: c81fb555563425560b4b17a486a21e183d046084457a60cb9349e01e5a9a0a1d
+      sha256: f0627c90d29b9c2959d55077b5488f15aa9acbd6b1ef41136405c7a187c1930c
       size: 752
   original:
-    hackage: bowtie-0.6.0
+    hackage: bowtie-0.7.0
 - completed:
-    commit: cacc35931643b941b1a53af096c563819406e50a
-    git: git@github.com:ejconlon/looksee.git
-    name: looksee
+    hackage: looksee-0.8.1@sha256:c888e5ca25d77baba858d2bb431d1d66fd4ba5fe7336051527e43e2cb552d7ec,3281
     pantry-tree:
-      sha256: 54ae33c35930cee504d0b1c1717d907d4fa53e4d92dbaff6e20a16f31060af48
-      size: 392
-    subdir: looksee
-    version: 0.8.1
+      sha256: 8a875a9742a650eb870d719f9fd33de8f39f6569595b23af211f041ccbfd272f
+      size: 340
   original:
-    commit: cacc35931643b941b1a53af096c563819406e50a
-    git: git@github.com:ejconlon/looksee.git
-    subdir: looksee
+    hackage: looksee-0.8.1
 snapshots:
 - completed:
     sha256: d133abe75e408a407cce3f032c96ac1bbadf474a93b5156ebf4135b53382d56b

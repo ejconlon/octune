@@ -1,12 +1,7 @@
 module Minipat.Octune.Ast where
 
-import Bowtie.Anno (Anno)
-import Bowtie.Memo (Memo)
 import Data.Sequence (Seq)
 import Data.Text (Text)
-import Looksee (Span)
-
-type Loc = Span Int
 
 data Waveform
   = Square
@@ -30,32 +25,33 @@ data Fun
     FunSlice !Beats !Beats
   deriving stock (Eq, Ord, Show)
 
+type ModName = Seq Text
+
 data QualName = QualName
-  { qnModule :: !(Seq Text)
+  { qnMod :: !ModName
   , qnVar :: !Text
   }
   deriving stock (Eq, Ord, Show)
 
-data FileF r = File !(Seq Text) !(Seq r)
-  deriving stock (Eq, Ord, Show)
+data File r = File
+  { fileMod :: !ModName
+  , fileDecls :: !(Seq r)
+  }
+  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
 
-type File = Anno Loc (FileF Decl)
-
-data DeclF r
-  = DeclSong !Text !Rational r
-  | DeclPart !Text r
-  deriving stock (Eq, Ord, Show)
-
-type Decl = Anno Loc (DeclF Exp)
+data Decl r = Decl
+  { declName :: !Text
+  , declExp :: !r
+  }
+  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 data ExpF r
   = ExpVar !QualName
   | ExpNote !Note
   | ExpApp !Fun !(Seq r)
   | ExpCheck !Beats r
-  deriving stock (Eq, Ord, Show)
-
-type Exp = Memo ExpF Loc
+  | ExpBpm !Rational r
+  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 data Letter
   = C

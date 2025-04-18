@@ -1,6 +1,7 @@
 module Minipat.Octune.Util where
 
-import Bowtie (Anno (..), Memo, memoKey, pattern MemoP)
+import Bowtie.Anno (Anno (..))
+import Bowtie.Memo (Memo (..), memoKey)
 import Control.Monad (when)
 import Control.Monad.Primitive (PrimMonad (..))
 import Control.Monad.Reader (ReaderT (..))
