@@ -128,7 +128,7 @@ topoEvalInc n findValRefs m f = fmap (flip execState n . go) (topoSortInc (Map.k
         Nothing -> error "invalid key fn"
         Just v -> do
           modify' $ \c ->
-            let r j = fromMaybe (c Map.! k) (Map.lookup j n)
+            let r j = fromMaybe (c Map.! j) (Map.lookup j n)
             in  Map.insert k (f r k v) c
           go ks
 
@@ -174,7 +174,7 @@ topoAnnoIncM n findValRefs m f = fmap (flip execStateT Map.empty . go) (topoSort
         Nothing -> error "invalid key fn"
         Just v -> do
           g <- gets $ \c ->
-            let r j = pure (fromMaybe (memoKey (c Map.! k)) (Map.lookup j n))
+            let r j = pure (fromMaybe (memoKey (c Map.! j)) (Map.lookup j n))
             in  \(MemoFP z fow) -> f r k z (fmap memoKey fow)
           x <- lift (reMkMemoM g v)
           modify' (Map.insert k x)
